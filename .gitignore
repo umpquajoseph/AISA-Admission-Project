@@ -4,3 +4,6 @@ Dutch_Bros_Techincal_Packet/
 .venv/
 __pycache__/
 .ipynb_checkpoints/
+
+# Built from the packet by pipeline/build_data.py; carries packet contents
+site/data.js
