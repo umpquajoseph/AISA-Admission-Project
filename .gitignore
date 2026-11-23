@@ -1,0 +1,6 @@
+# Supplied data: 252 MB, stays on this PC
+Dutch_Bros_Techincal_Packet/
+# Python and notebook noise
+.venv/
+__pycache__/
+.ipynb_checkpoints/
