@@ -2,12 +2,12 @@
 
 Run with:  python -I pipeline/build_data.py
 
-Everything the page shows comes from this file's output. Each number keeps
-where it came from (file, row, original value and unit, rule applied).
+This bundles the packet for the page: reference tables, plan files, sales-implied
+use, and the raw cells of every manager sheet and raw text of every email. The
+page interprets sheets and emails itself (site/core.js), so packet files and
+files the planner adds go through the same reader.
 """
 import csv
-import email
-import email.policy
 import json
 import re
 import sys
@@ -64,12 +64,6 @@ def norm_month(v):
     if m and m[1] in MONTH_ABBR:
         return f"20{m[2]}-{MONTH_ABBR[m[1]]:02d}"
     raise ValueError(f"unrecognised month heading {v!r}")
-
-
-def num(v):
-    if v is None or (isinstance(v, str) and not v.strip()):
-        return None
-    return float(v)
 
 
 def clean(v):
@@ -143,130 +137,44 @@ def read_release(path):
     return dict(sheet=title, months=months, stamp=stamp, grid=grid)
 
 
-# ---------------------------------------------------------------- manager sheets
-def read_manager_sheet(path):
-    """-> dict(layout, author, hub, dated, entries=[{local, unit, month, qty, note, row}])"""
-    layout, rows = sheet_rows(path)
-    meta = re.split(r"\s{2,}", str(rows[2][0]).strip()) if rows[2][0] else []
-    author, hub, dated = (meta + [None] * 3)[:3]
-    entries = []
-    if layout == "Outbound needs":
-        h = find_header(rows, {"Stock no."})
-        for i, r in enumerate(rows[h + 1:], start=h + 2):
-            if not r[0]:
-                continue
-            entries.append(dict(local=str(r[0]), month=norm_month(r[1]), unit=r[3],
-                                qty=num(r[4]), note=clean(r[6]) if len(r) > 6 else None, row=i))
-    else:
-        h = find_header(rows, {"Counter SKU", "Stock alias"})
-        head = rows[h]
-        mcols = [(j, norm_month(c)) for j, c in enumerate(head) if j >= 3 and c is not None
-                 and not str(c).lower().startswith(("dispatch", "buyer"))]
-        note_col = len(head) - 1
-        for i, r in enumerate(rows[h + 1:], start=h + 2):
-            if not r[0]:
-                continue
-            note = clean(r[note_col]) if len(r) > note_col else None
-            for j, m in mcols:
-                entries.append(dict(local=str(r[0]), month=m, unit=r[2], qty=num(r[j]),
-                                    note=note, row=i))
-    return dict(layout=layout, author=author, hub=hub, dated=dated, entries=entries)
+# ---------------------------------------------------------------- manager sheets and emails
+# The page reads these itself (site/core.js), with the same code it uses for a
+# sheet or email the planner pastes, drops or picks up from a watched folder.
+# This script only bundles the raw cells and text, so there is one reader.
+def raw_cell(v):
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    if isinstance(v, date):
+        return v.isoformat()
+    return v
 
 
-def build_submissions(ref):
-    """Resolve every manager file to cases per SKU and month.
-
-    Rules, all from the packet:
-      - local code -> SKU and EA per case from the regional crosswalk
-      - EA -> CS by dividing by EA per case
-      - 'Reorder roll' blank carries the same item and month from the previous
-        accepted cycle; zero cancels that month
-      - only the Intake log's Accepted file counts; Replaced files are kept to compare
-    """
-    xw = {(c["region"], c["local"]): c for c in ref["crosswalk"]}
-    files = []
-    accepted_by_region = defaultdict(list)          # region -> [cycle files in order]
-    for e in sorted(ref["intake_log"], key=lambda e: (e["region"], e["cycle"], e["received"])):
-        path = PLANNING / e["file"]
-        sheet = read_manager_sheet(path)
-        files.append(dict(intake=e, sheet=sheet))
-
-    resolved_accepted = {}                           # (region, cycle) -> {(sku, month): cell}
-    out_files = []
-    for f in files:
-        e, sheet = f["intake"], f["sheet"]
-        region, cycle = e["region"], e["cycle"]
-        prev = None
-        cycles = sorted(c for (r, c) in resolved_accepted if r == region and c < cycle)
-        if cycles:
-            prev = resolved_accepted[(region, cycles[-1])]
-        cells, problems = {}, []
-        for en in sheet["entries"]:
-            x = xw.get((region, en["local"]))
-            if not x:
-                problems.append(f"Row {en['row']}: local code {en['local']} is not in the crosswalk")
-                continue
-            sku = x["sku"]
-            cell = dict(sku=sku, month=en["month"], local=en["local"], unit=en["unit"],
-                        orig=en["qty"], row=en["row"], note=en["note"], rule=[])
-            if en["qty"] is None:
-                if sheet["layout"] == "Reorder roll" and prev and (sku, en["month"]) in prev:
-                    p = prev[(sku, en["month"])]
-                    cell["cs"] = p["cs"]
-                    cell["rule"].append(f"blank: carried from {p['cycle']} cycle")
-                    cell["carried_from"] = p["cycle"]
-                else:
-                    cell["cs"] = None
-                    problems.append(f"Row {en['row']}: {sku} {en['month']} is blank with nothing to carry")
-            else:
-                if en["unit"] == "EA":
-                    cs = en["qty"] / x["ea_per_case"]
-                    cell["rule"].append(f"{en['qty']:g} EA / {x['ea_per_case']} per case")
-                    if abs(cs - round(cs)) > 1e-9:
-                        problems.append(f"Row {en['row']}: {sku} {en['month']} {en['qty']:g} EA "
-                                        f"is not a whole number of cases ({cs:.2f})")
-                elif en["unit"] == "CS":
-                    cs = en["qty"]
-                else:
-                    cs = None
-                    problems.append(f"Row {en['row']}: unknown unit {en['unit']!r}")
-                if cs == 0:
-                    cell["rule"].append("zero: month cancelled")
-                cell["cs"] = cs
-            cell["cycle"] = cycle
-            cells[(sku, en["month"])] = cell
-        if e["disposition"] == "Accepted":
-            resolved_accepted[(region, cycle)] = cells
-        out_files.append(dict(
-            cycle=cycle, region=region, hub=e["hub"], received=e["received"],
-            disposition=e["disposition"], file=e["file"], replaced_by=e["replaced_by"],
-            note=e["note"], layout=sheet["layout"], author=sheet["author"], dated=sheet["dated"],
-            problems=problems,
-            counts=dict(cells=len(cells),
-                        ea=sum(1 for c in cells.values() if c["unit"] == "EA" and c["orig"] is not None),
-                        carried=sum(1 for c in cells.values() if c.get("carried_from")),
-                        cancelled=sum(1 for c in cells.values() if c["cs"] == 0)),
-            cells={f"{region}|{k[0]}|{k[1]}": v for k, v in cells.items()}))
-    return out_files
+def raw_rows(path):
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows = []
+    for r in ws.iter_rows(values_only=True):
+        r = [raw_cell(v) for v in r]
+        while r and r[-1] is None:
+            r.pop()
+        rows.append(r)
+    title = ws.title
+    wb.close()
+    return title, rows
 
 
-# ---------------------------------------------------------------- correspondence
-def read_emails():
+def bundle_submissions(ref):
     out = []
-    for p in sorted((PACKET / "Correspondence").rglob("*.eml")):
-        msg = email.message_from_bytes(p.read_bytes(), policy=email.policy.default)
-        body = msg.get_body(preferencelist=("plain",))
-        text = body.get_content() if body else ""
-        attachments = [part.get_filename() for part in msg.iter_attachments() if part.get_filename()]
-        dt = email.utils.parsedate_to_datetime(msg["Date"]) if msg["Date"] else None
-        out.append(dict(
-            id=p.stem, folder=p.parent.name, file=str(p.relative_to(PACKET)).replace("\\", "/"),
-            date=dt.strftime("%Y-%m-%d") if dt else None,
-            time=dt.strftime("%H:%M") if dt else None,
-            sender=str(msg["From"] or ""), to=str(msg["To"] or ""),
-            subject=str(msg["Subject"] or ""), body=text.strip(), attachments=attachments))
-    out.sort(key=lambda e: (e["date"] or "", e["time"] or ""))
+    for e in sorted(ref["intake_log"], key=lambda e: (e["received"], e["region"])):
+        title, rows = raw_rows(PLANNING / e["file"])
+        out.append(dict(e, sheet=title, rows=rows))
     return out
+
+
+def bundle_emails():
+    return [dict(file=str(p.relative_to(PACKET)).replace("\\", "/"),
+                 raw=p.read_bytes().decode("utf-8", errors="replace"))
+            for p in sorted((PACKET / "Correspondence").rglob("*.eml"))]
 
 
 # ---------------------------------------------------------------- sales-implied use
@@ -310,8 +218,8 @@ def main():
     for e in ref["release_log"]:
         rel = read_release(PLANNING / e["file"])
         releases.append(dict(e, **rel, id=f"{e['cycle']}:{Path(e['file']).stem}"))
-    submissions = build_submissions(ref)
-    emails = read_emails()
+    submissions = bundle_submissions(ref)
+    emails = bundle_emails()
     sales = read_sales_use()
     menu = read_menu_names()
     std_drinks = sorted({(r["menu_id"], r["sku"]) for r in csv.DictReader(
@@ -332,9 +240,6 @@ def main():
                    + payload + ";\n", encoding="utf-8")
     print(f"wrote {OUT} ({len(payload)/1024:.0f} KB): {len(releases)} releases, "
           f"{len(submissions)} manager files, {len(emails)} emails")
-    for f in submissions:
-        if f["problems"]:
-            print(f"  {f['file']}: {len(f['problems'])} problems, e.g. {f['problems'][0]}")
 
 
 if __name__ == "__main__":
