@@ -5,8 +5,8 @@ About 7 minutes. October is made up from the real September files and says so on
 ## Before
 
 1. In `C:\AISA`: `npm run dev`.
-2. Clear the old record: in the browser console, `Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k))`.
-3. Open the head-manager page: http://127.0.0.1:8788/?example=1 (if the server says it started on another port, use that one). September is done; the day is Tue Oct 6.
+2. Open the head-manager page: http://127.0.0.1:8788/ (if the server says it started on another port, use that one).
+3. Click **Reset demo** at the top right and confirm. September is done; the day is Tue Oct 6.
 4. Step 11 opens the submanager page in a second tab, from **Submanager view ↗** at the top right.
 5. The AI buttons need `ANTHROPIC_API_KEY=...` in `C:\AISA\.dev.vars`. Without it they say "Assistant not connected".
 

@@ -12,3 +12,5 @@ site/data.js
 .dev.vars
 # npm
 node_modules/
+# Session handoff notes; local only
+docs/HANDOFF.md

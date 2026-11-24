@@ -148,8 +148,10 @@ function renderPage() {
   };
   const stepI = STEPS.findIndex(([id]) => id === S.tab);
   $("rail").innerHTML = STEPS.map(([id, n], i) => `<button class="step ${S.tab === id ? "on" : ""} ${stepI > i ? "past" : ""} ${id === "check" && X.rv.open && !X.pub ? "warn" : ""}" data-step="${id}"><span class="no">${i + 1}</span><span class="nm">${n}</span><span class="st">${esc(railInfo[id])}</span></button>`).join("");
-  $("side").innerHTML = SIDE.map(([id, n]) => `<button class="sidelink ${S.tab === id ? "on" : ""}" data-step="${id}">${n}</button>`).join("") + `<a class="sidelink" href="?role=manager" target="_blank" rel="noopener">Submanager view ↗</a>`;
+  $("side").innerHTML = SIDE.map(([id, n]) => `<button class="sidelink ${S.tab === id ? "on" : ""}" data-step="${id}">${n}</button>`).join("") + `<a class="sidelink" href="?role=manager" target="_blank" rel="noopener">Submanager view ↗</a><button class="sidelink" id="resetDemo">Reset demo</button>`;
   document.querySelectorAll("[data-step]").forEach(b => b.onclick = () => go(b.dataset.step));
+  // back to Tue Oct 6 with September settled: clears everything this browser saved, as the demo's start does
+  $("resetDemo").onclick = () => { if (!confirm("Reset the demo? This clears everything saved in this browser.")) return; try { Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k)); } catch (e) {} location.href = location.pathname + "?example=1"; };
   (PAGES[S.tab] || pageSheets)(X);
 }
 const PAGES = { sheets: pageSheets, check: pageCheck, publish: pagePublish, news: pageNews, send: pageSend, history: pageHistory, ask: pageAsk };
