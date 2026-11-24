@@ -199,6 +199,9 @@ input.cellin { width: 100%; min-width: 50px; border: 0; padding: 0; text-align: 
 .check.ok { color: #1f6b1f; }
 .check.bad { color: var(--warn); }
 
+.askbox { display: flex; gap: var(--s); align-items: stretch; margin: var(--m) 0; max-width: 900px; }
+.askbox textarea { flex: 1; height: 64px; resize: vertical; }
+
 /* history */
 .log .day { font-weight: 700; margin: 12px 0 4px; color: var(--hint); font-size: var(--f-hint); text-transform: uppercase; letter-spacing: .05em; }
 .logrow { display: grid; grid-template-columns: 70px 1fr; gap: var(--s); background: var(--card); border: 1px solid var(--border); padding: 5px var(--m); margin-bottom: 3px; }

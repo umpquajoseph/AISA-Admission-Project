@@ -2,6 +2,7 @@
  *   Inbox    what arrived and what needs a decision; add sheets and emails here
  *   Plan     one month at a time; click a number to see its source, type to change it
  *   History  the log of everything that arrived or changed, trends, and version compare
+ *   Ask      questions about the record (placeholder until the assistant is connected)
  * The time slider sets the desk's date. Anything you add or change is dated to it.
  * Reading and plan logic live in core.js; this file only draws and records. */
 "use strict";
@@ -10,7 +11,7 @@ const START = D.releases.filter(r => r.disposition === "Posted").map(r => r.logg
 const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
 const REGIONS = Object.fromEntries(D.regions.map(r => [r.code, r]));
 const CATS = [...new Set(D.items.map(i => i.category))];
-const TABS = [["inbox", "Inbox"], ["plan", "Plan"], ["history", "History"]];
+const TABS = [["inbox", "Inbox"], ["plan", "Plan"], ["history", "History"], ["ask", "Ask"]];
 
 /* ------------------------------------------------------------ storage */
 const KEY = "supplydesk.v2.";
@@ -124,7 +125,7 @@ function renderPage() {
   const p = desk.planAt(S.date);
   const ne = p ? desk.editsAt(S.date).length : 0;
   $("meta").innerHTML = p ? `Plan in force: <b>${esc(p.base.name)}</b> (posted ${dlabel(p.base.date)})${ne ? ` + ${ne} change${ne > 1 ? "s" : ""}` : ""}` : "No plan posted yet";
-  ({ inbox: pageInbox, plan: pagePlan, history: pageHistory })[S.tab]();
+  ({ inbox: pageInbox, plan: pagePlan, history: pageHistory, ask: pageAsk })[S.tab]();
 }
 function countNeeds() { const n = desk.needs(S.date); return n.sheets.length + n.inputs.length; }
 document.addEventListener("click", e => {
@@ -713,6 +714,18 @@ function histCompare() {
     <div class="hint" style="margin-top:6px">${rows.length} line${rows.length === 1 ? "" : "s"} differ. Desk note on the later file: ${esc(B.note || "—")}</div>`;
   $("dA").onchange = e => { S.diffA = e.target.value; renderPage(); };
   $("dB").onchange = e => { S.diffB = e.target.value; renderPage(); };
+}
+
+/* ------------------------------------------------------------ Ask (placeholder until the assistant is connected) */
+function pageAsk() {
+  const examples = ["What changed since the Sep 11 plan, and why?", "Why is Gulf Coast mango 259 in October?", "Which messages still need a decision before Monday's buy review?", "Draft the changes this email asks for."];
+  $("page").innerHTML = `
+    <h1>Ask</h1>
+    <div class="hint">Questions about the desk as of ${dlong(S.date)}. The assistant answers from this desk's record only and names the sheet, email or change behind each answer. It can also draft changes from an email or a pasted dump; drafts wait in the Inbox for you to approve.</div>
+    <div class="askbox"><textarea disabled placeholder="Ask about the plan, a sheet, an email or a change"></textarea><button class="btn primary" disabled>Ask</button></div>
+    <div class="empty">Not connected yet. It goes live once the assistant is wired to the Claude API, with the key kept on a server and never in this page.</div>
+    <h2>Questions it will answer</h2>
+    <div class="list">${examples.map(q => `<div class="item">${esc(q)}</div>`).join("")}</div>`;
 }
 
 /* ------------------------------------------------------------ outputs */

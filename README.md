@@ -20,7 +20,7 @@ example on a fresh browser.
 
 ## How it fits together
 
-One record, three views. The slider sets the desk's date; everything you add or
+One record, three views, plus Ask. The slider sets the desk's date; everything you add or
 change is dated to it, so moving the slider back shows the desk as it stood.
 
 | View | What it does |
@@ -28,6 +28,7 @@ change is dated to it, so moving the slider back shows the desk as it stood.
 | Inbox | What needs a decision: new sheets that differ from the plan (use the request or keep the plan, per line or all), and messages grouped by thread (change the plan, no change, waiting on someone). A reply reopens a thread. Add sheets and emails by pasting, dropping a file, or watching a folder. Click a region's sheet to see every line as read, with conversions and corrections |
 | Plan | One month at a time, regions across, network total. Click a number for its source, request, checks and every plan file's value. Type to change it, or add/move with a reason; EA converts to cases. Publish makes the working plan the plan in force |
 | History | Everything that arrived or changed, newest first; trends per item (each posted plan, the requests, sales-implied use); compare any two versions |
+| Ask | Placeholder: questions about the record and AI-drafted changes, once the assistant is connected |
 
 Files: `pipeline/build_data.py` bundles the packet raw. `site/core.js` reads
 every sheet and email (packet or added, one reader) and works out the plan as of
