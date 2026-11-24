@@ -752,7 +752,57 @@
       return { base: w.base && { id: w.base.id, name: w.base.name, date: w.base.date }, rows, holds: w.holds, scenarios: w.scenarios, superseded: w.superseded, csv: lines.join("\n") + "\n" };
     }
 
+    /* ---------------------------------------------------------------- assistant */
+    /* one message as plain text, for POST /api/draft: an input id, a thread id, or pasted text */
+    function messageText(idOrText, T) {
+      const one = x => x.kind === "email" ? [`From: ${x.mail.sender}`, `To: ${x.mail.to || ""}`, `Date: ${x.date} ${x.time || ""}`.trim(), `Subject: ${x.mail.subject}`, "", x.mail.body].join("\n")
+        : x.kind === "calendar" ? `Event calendar row ${x.event.id} (${x.event.type}, ${x.event.status}), known ${x.date}: ${x.event.detail}`
+        : x.kind === "sheet" ? `Sheet ${x.src} (${regionName(x.region)}, ${x.cycle} cycle), received ${x.date}` : String(x.src || "");
+      if (byId[idOrText]) return one(byId[idOrText]);
+      const th = T && threadsAt(T).find(t => t.id === idOrText);
+      if (th) return th.items.map(one).join("\n\n---\n\n");
+      return String(idOrText || "");
+    }
+    /* what the assistant reads: the desk as of T, compact. The page sends this same object on
+     * every call, so the answer can only come from what the planner can see on that date.
+     * opts.focus: a thread or input id to send in full; opts.bodyChars: trim for other emails */
+    function assistantContext(T, opts) {
+      opts = opts || {};
+      const cut = (s, n) => { s = String(s || "").replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim(); return s.length > n ? s.slice(0, n) + " …" : s; };
+      const w = working(T), cyc = cycleAt(T), rv = review(T), ak = (() => { const v = versionsAll.filter(v => v.role === "published" && v.date <= T).pop(); return v ? answerKey(v) : null; })();
+      const months = w.months || [];
+      const plan = {};
+      for (const [rs, row] of Object.entries(w.grid)) plan[rs] = months.map(m => row[m] == null ? null : Math.round(row[m] * 10) / 10);
+      const msgItem = (x, n) => x.kind === "email" ? { id: x.id, date: x.date, from: x.mail.sender, subject: x.mail.subject, body: cut(x.mail.body, n), synthetic: !!x.synthetic || undefined }
+        : x.kind === "calendar" ? { id: x.id, date: x.date, event: x.event.id, type: x.event.type, status: x.event.status, region: x.event.region, detail: cut(x.event.detail, n) }
+        : { id: x.id, date: x.date, kind: x.kind, src: x.src };
+      const focus = opts.focus || null, bodyChars = opts.bodyChars || 700;
+      const threads = threadsAt(T).slice(0, opts.threads || 30).map(t => ({ id: t.id, title: t.title, region: t.region, last: t.last, messages: t.items.map(x => msgItem(x, t.id === focus || x.id === focus ? 6000 : bodyChars)) }));
+      const ch = (record.changes || []).filter(c => c.date <= T).map(c => ({ id: c.id, date: c.date, type: c.type, ref: c.ref || null, key: c.key || null, qty: c.qty == null ? null : c.qty, unit: c.unit || null, to: c.to || null, reason: c.reason || "", quote: c.quote || undefined, source: c.source || null, removed_on: c.removed_on && c.removed_on <= T ? c.removed_on : undefined }));
+      const dec = (record.decisions || []).filter(d => d.date <= T).slice(-40).map(d => ({ id: d.id, date: d.date, target: d.target, outcome: d.outcome, value: d.value, note: d.note || undefined }));
+      return {
+        asOf: T, cycle: cyc, synthetic: inputsAt(T).some(x => x.synthetic) || undefined,
+        units: "Quantities are cases (CS) unless a unit says EA; EA ÷ ea_per_case = CS. Keys are region|sku|month.",
+        regions: D.regions.map(r => ({ code: r.code, name: r.name, manager: r.manager, hub: r.hub, shops: r.shops })),
+        items: D.items.map(i => ({ sku: i.sku, name: i.name, ea_unit: i.ea_unit, ea_per_case: i.ea_per_case })),
+        planInForce: w.base ? { id: w.base.id, name: w.base.name, date: w.base.date, role: w.base.role } : null,
+        months, plan,
+        diff: w.diff.map(x => ({ key: x.key, released: x.released, proposed: x.proposed, d: x.d, how: x.text, reason: x.reason, changes: x.changes.map(c => c.id) })),
+        holds: w.holds.map(h => ({ id: h.id, ref: h.ref, date: h.date, text: h.text, source: h.source })),
+        scenarios: w.scenarios.map(s => ({ id: s.id, ref: s.ref, key: s.key, date: s.date, text: s.text, released: s.released, would: s.would, reason: s.reason })),
+        superseded: w.superseded,
+        changes: ch, decisions: dec,
+        versions: versionsAll.filter(v => v.date <= T).map(v => ({ id: v.id, name: v.name, date: v.date, cycle: v.cycle, role: v.role, status: v.status, note: v.note || undefined })),
+        sheets: sheetsAt(T).filter(s => !cyc || s.cycle >= addM(cyc, -1)).map(s => ({ id: s.id, src: s.src, date: s.date, region: s.region, cycle: s.cycle, replaces: s.replaces || undefined, problems: (s.problems || []).length || undefined })),
+        draft: rv.headline ? { cycle: rv.cycle, headline: rv.headline, lastPlan: rv.lastPlan && rv.lastPlan.name, flags: rv.lines.slice(0, opts.flags || 30).map(l => ({ key: l.key, last: l.last, ask: l.ask, expected: l.expected, why: l.why, note: l.note || undefined, decision: l.decision ? l.decision.outcome : undefined })) } : null,
+        known: knownAt(T).map(k => ({ ref: k.ref, key: `${k.region}|${k.sku}|${k.month}`, cs: k.cs, text: k.text, input: k.input })),
+        threads,
+        answerKey: ak ? { headline: ak.headline, lean: ak.leanText } : undefined,
+      };
+    }
+
     return {
+      messageText, assistantContext,
       inputs, byId, sheets, versionsAll, ITEMS, regionName,
       baseAt, prevBase, planAt, editsAt, inputsAt, threadsAt, editLive, sheetsAt, cycleAt, latestSheet, requestAt, decisionAt, checks, needs, fmt, sign,
       // v3

@@ -1,0 +1,12 @@
+{
+  "name": "supply-desk",
+  "private": true,
+  "type": "module",
+  "description": "Supply Desk prototype: static site plus the assistant endpoint (Cloudflare Pages Functions)",
+  "scripts": {
+    "dev": "node dev/server.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0"
+  }
+}
