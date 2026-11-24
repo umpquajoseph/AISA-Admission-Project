@@ -855,7 +855,7 @@
       // 1. journal entries
       for (const j of PO.journal.filter(j => j.at.slice(0, 10) <= T)) {
         const day = j.at.slice(0, 10), l = lines.find(x => x.id === `${j.po}/${j.line}`); if (!l) continue;
-        const base = { id: "po:" + j.no, kind: "short", date: day, sku: l.sku, month: l.month, region: null, synthetic: !!j.synthetic, quote: j.comment, source: `${j.no} · ${l.supplier} · ${j.po}/${j.line}` };
+        const base = { id: "po:" + j.no, kind: "short", date: day, sku: l.sku, month: l.month, region: null, synthetic: !!j.synthetic, quote: j.comment, source: `Supplier: ${l.supplier}` };
         if (j.type === "Cancel balance") {
           const kept = csOf(j.new), cut = csOf(j.old) - kept;
           items.push({ ...base, lines: [l], need: cut, title: `${name(l.sku)}: ${l.received >= kept ? "supplier sent" : "order cut to"} ${fmt(kept)} of ${fmt(csOf(j.old))} cases`,
@@ -870,7 +870,7 @@
         } else if (j.type === "Void line") {
           const re = (j.comment.match(/PO-\d+\/\d+/) || [])[0], rl = re && lines.find(x => x.id === re);
           const rj = rl && PO.journal.find(x => x.type === "Replacement issued" && `${x.po}/${x.line}` === re && x.at.slice(0, 10) <= T);
-          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `${j.no} and ${rj.no} · ${l.supplier}`,
+          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `Supplier: ${l.supplier}`,
             title: `${name(l.sku)}: ${fmt(rl.qty)} cases reissued on ${rl.po}, due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `${j.po}/${j.line} was voided and reissued on ${re}.`,
             done: rl.open === 0 ? "received" : null, prefill: { action: "rush", qty: rl.qty, by: [l.due0, addD(T, 2)].sort().pop(), po: rl.id }, change: changeInit(l.sku, l.month) });
           else items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases voided`, text: `${j.po}/${j.line} was voided with no replacement on the list.`,
@@ -903,12 +903,11 @@
             // cases the supplier or buyer already cut from these orders count against the drop
             const cut0 = used.reduce((t, l) => t + l.cancelled, 0), excess = Math.min(open, -net - cut0); if (excess < 1 || !used.length) continue;
             const id = "much:" + a.sku + "@" + a.month, cut = askedOf(id, T).filter(o => o.action === "cut").reduce((t, o) => t + o.qty, 0);
-            const now = planNow(a.sku, a.month), was = now == null ? null : Math.round((now - net) * 1000) / 1000;   // before the drop, so was − now is the drop the title counts
-            const how = [...a.parts.filter(p => p.d < 0).map(p => `${regionName(p.region)}: ${p.text}${p.reason ? ` (${p.reason})` : ""}`), ...(check ? a.checkParts.map(p => `${regionName(p.region)}: set to ${fmt(p.value)} under Check, was ${fmt(p.last)}`) : [])];
+            const how = [...a.parts.filter(p => p.d < 0).map(p => `${regionName(p.region)} ${p.text}${p.reason ? ` (${p.reason})` : ""}`), ...(check ? a.checkParts.map(p => `${regionName(p.region)}: set to ${fmt(p.value)} under Check, was ${fmt(p.last)}`) : [])];
             const big = used.slice().sort((x, y) => y.open - x.open)[0];
             items.push({ id, kind: "much", date: dates[dates.length - 1] || w.base.date, sku: a.sku, month: a.month, region: null, lines: used, need: excess, synthetic: used.some(l => l.synthetic),
-              title: `${name(a.sku)}: ${fmt(open)} cases on order, but you lowered ${mLong(a.month)}. ${fmt(excess)} more than the plan needs`,
-              text: how.join(" · "), source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now${was != null ? `, ${fmt(was)} before you lowered it` : ""}`,
+              title: `${name(a.sku)}: ${fmt(excess)} more cases on order for ${mLong(a.month)} than the plan now needs`,
+              text: `You lowered ${mLong(a.month)} by ${fmt(-net)} cases: ${how.join("; ")}. ${fmt(open)} cases are still on order for it.`, source: "",
               prefill: { action: "cut", qty: Math.max(0, excess - cut), by: big.due || big.due0, po: big.id }, change: changeInit(a.sku, a.month) });
           } else if (net >= 1 && a.d > 0) {
             // need date: a calendar event for the same region and month that arrived within three days of
@@ -918,11 +917,12 @@
             const need = needs.sort()[0], by = addD(need, -lead(a.sku));
             if (by > addD(a.date, 14) || need < T) continue;
             const id = "late:" + a.sku + "@" + a.month, more = askedOf(id, T).filter(o => o.action !== "cut").reduce((t, o) => t + o.qty, 0);
-            const reg = a.parts.filter(p => p.d > 0).sort((x, y) => y.d - x.d)[0].region;
+            const ups = a.parts.filter(p => p.d > 0), reg = ups.slice().sort((x, y) => y.d - x.d)[0].region;
+            const whys = [...new Set(ups.map(p => p.reason).filter(Boolean))].join("; ");
             items.push({ id, kind: "late", date: a.date, sku: a.sku, month: a.month, region: reg, lines: lines.filter(l => l.sku === a.sku && l.open > 0), need: net, synthetic: false, orderBy: by,
-              title: `${name(a.sku)} +${fmt(net)} cases for ${dl(need)}: ${by < T ? `order-by date ${dl(by)} has passed` : `order by ${dl(by)} to arrive in time`}`,
-              text: `${a.parts.filter(p => p.d > 0).map(p => `${regionName(p.region)}: ${p.text}${p.reason ? ` (${p.reason})` : ""}`).join(" · ")}. ${name(a.sku)} takes ${lead(a.sku)} days to arrive${by < T ? `; ordered today it arrives ${dl(addD(T, lead(a.sku)))}` : ""}.`,
-              source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now, ${fmt(netPlan(w.base.grid, a.sku, a.month))} as published`,
+              title: `${name(a.sku)}: ${ups.length === 1 ? `${regionName(reg)}'s ` : ""}extra ${fmt(net)} cases for ${dl(need)} ${by < T ? "won't arrive in time" : `must be ordered by ${dl(by)}`}`,
+              text: `You added ${fmt(net)} cases for ${ups.length === 1 ? regionName(reg) : ups.map(p => regionName(p.region)).join(", ")}${whys ? ` (${whys})` : ""}. No order covers them yet. ${name(a.sku)} takes ${lead(a.sku)} days to arrive${by < T ? `, so an order placed today arrives ${dl(addD(T, lead(a.sku)))}` : ""}.`,
+              source: "", already: true,
               // already asked for more than the plan now adds: offer to cut the difference
               prefill: net - more < 0 ? { action: "cut", qty: more - net, by: need, po: "" } : { action: by < T ? "rush" : "more", qty: net - more, by: need, po: "" }, change: changeInit(a.sku, a.month, { region: reg }) });
           }
@@ -934,9 +934,9 @@
         const cs = ea ? q.qty / epc(q.by, q.item) : q.qty, by = addD(q.need, -lead(q.item));
         const key = `${q.by}|${q.item}|${m}`, inPlan = (w.grid[q.by + "|" + q.item] || {})[m], ch = w.applied[key] || [];
         items.push({ id: "rq:" + q.id, kind: "request", date: q.at.slice(0, 10), sku: q.item, month: m, region: q.by, synthetic: !!q.synthetic, need: cs, orderBy: by,
-          lines: lines.filter(l => l.sku === q.item && l.open > 0), quote: q.note, source: `Requisition ${q.id} · ${q.scope} · buyer link: ${q.po || "none yet"}`,
+          lines: lines.filter(l => l.sku === q.item && l.open > 0), quote: q.note, source: `Requisition ${q.id}${q.po ? `, on order ${q.po}` : ", not ordered yet"}`,
           title: `${regionName(q.by)}: ${fmt(q.qty)} ${ea ? unit + "s" : "cases"} of ${name(q.item)} for ${dl(q.need)}`,
-          text: `${ea ? `${fmt(q.qty)} ${unit}s ÷ ${epc(q.by, q.item)} = ${fmt(cs)} cases. ` : ""}In the plan for ${regionName(q.by)}, ${mLong(m)}: ${inPlan == null ? "no line" : `${fmt(inPlan)} cases`}${ch.length ? `, including ${ch.map(c => `${c.ref || "a change"}, ${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} cases, logged ${dl(c.date)}`).join("; ")}` : ""}. Order-by date ${dl(by)}${by < T ? " has passed" : ""}.`,
+          text: `${ea ? `${fmt(q.qty)} ${unit}s is ${fmt(cs)} cases. ` : ""}In the plan for ${regionName(q.by)}, ${mLong(m)}: ${inPlan == null ? "no line" : `${fmt(inPlan)} cases`}${ch.length ? `, including ${ch.map(c => `${c.ref || "a change"}, ${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} cases, logged ${dl(c.date)}`).join("; ")}` : ""}. Order-by date ${dl(by)}${by < T ? " has passed" : ""}.`,
           prefill: { action: by < T ? "rush" : "more", qty: cs, by: q.need, po: "" }, change: { type: "add", region: q.by, sku: q.item, month: months.includes(m) ? m : months[0], qty: ea ? q.qty : cs, unit: ea ? "EA" : "CS", reason: `${q.id}: ${q.scope}` } });
       }
       for (const it of items) {

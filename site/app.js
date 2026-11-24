@@ -434,9 +434,8 @@ function detailHtml(key, pv) {
 /* open orders for an item on the buyer's watch list, pooled for all regions */
 function onOrderHtml(sku, m, pv) {
   const open = desk.poAt(S.date).filter(l => l.sku === sku && l.open > 0).sort((a, b) => (a.due || "").localeCompare(b.due || ""));
-  let net = 0; for (const r of D.regions) net += (pv.grid[r.code + "|" + sku] || {})[m] || 0;
   return `${open.map(l => `<div>On order: <b>${esc(l.id)}</b>, ${plural(l.open, "case")}, due ${dlabel(l.due)}${l.month !== m ? ` <span class="hint">(for ${mlabel(l.month)})</span>` : ""}</div>`).join("") || `<div class="hint">Nothing open for this item on the buyer's watch list.</div>`}
-    <div class="hint">Pooled at Central Intake for all regions: ${fmt(net)} cases in the plan for ${mlabel(m)}. The watch list covers some orders only.</div>`;
+`;
 }
 function srcName(id) {
   const x = desk.byId[id]; if (x) return x.kind === "sheet" ? `${regName(x.region)} sheet, ${dlabel(x.date)}` : x.mail ? x.mail.subject : id;
@@ -532,19 +531,17 @@ const decFormHtml = id => S.pending && S.pending.target === id ? `<form class="i
 const PKIND = { short: "Short", much: "Too much", late: "Too late", request: "Request" };
 const ACTS = [["more", "Order more"], ["cut", "Cut the order"], ["rush", "Rush"]];
 const actWord = a => ({ more: "order more", cut: "cut the order by", rush: "rush" })[a] || a;
-function orderTable(lines) {
-  if (!lines.length) return `<div class="hint">No open order for this item on the buyer's watch list.</div>`;
-  return `<table class="plain mini"><tr><th>Order</th><th>Supplier</th><th class="n">Ordered</th><th class="n">Received</th><th class="n">Open</th><th>Due now</th><th></th></tr>
-    ${lines.map(l => `<tr><td>${esc(l.id)}</td><td>${esc(l.supplier)}</td><td class="n">${fmt(l.qty)}</td><td class="n">${fmt(l.received)}</td><td class="n"><b>${fmt(l.open)}</b></td><td>${l.due ? dlabel(l.due) : "—"}</td><td class="hint">${esc(l.status)}${l.cancelled ? `, ${fmt(l.cancelled)} cancelled` : ""}</td></tr>`).join("")}</table>`;
+function orderLines(it) {
+  if (!it.lines.length) return "";
+  return it.lines.map(l => `<div class="hint">${it.already ? "Already on order for the plan as published: " : "Order "}${esc(l.id)}, ${fmt(l.qty)} cases ordered, ${fmt(l.received)} received${l.cancelled ? `, ${fmt(l.cancelled)} cut` : ""}, ${fmt(l.open)} still to come${l.due ? `, due ${dlabel(l.due)}` : ""}.</div>`).join("");
 }
 function buyRow(it) {
   const id = it.id, open = S.open[id];
   return `<div class="mrow ${open ? "open" : ""}">
     <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${it.kind}">${PKIND[it.kind]}</span><b>${esc(it.title)}</b><span class="reg">${esc(it.region ? regName(it.region) : "All regions")}</span><span class="hint">${dlabel(it.date)}</span><span class="chev">${open ? "▾" : "▸"}</span></div>
     ${open ? `<div class="mbody">
-      <div class="msg"><div class="hint">${esc(it.source)}${it.synthetic ? " · made up for rehearsal" : ""}</div><div>${esc(it.text)}</div>${it.quote ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}</div>
-      ${orderTable(it.lines)}
-      <div class="hint" style="margin-top:4px">${/^Plan for/.test(it.source) ? "" : esc(it.planText) + ". "}Orders are pooled at Central Intake for all regions. The watch list covers some orders only, and there is no stock-on-hand figure.</div>
+      <div class="msg">${it.source || it.synthetic ? `<div class="hint">${esc([it.source, it.synthetic && "made up for rehearsal"].filter(Boolean).join(" · "))}</div>` : ""}<div>${esc(it.text)}</div>${it.quote ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}</div>
+      ${orderLines(it)}
       ${it.asked.length ? `<div style="margin-top:4px">Already asked: ${it.asked.map(o => `${actWord(o.action)} ${fmt(o.qty)} cases by ${dlabel(o.by)} (${dlabel(o.date)})`).join("; ")}</div>` : ""}
       <div class="acts"><button class="btn small primary" data-ask="${esc(id)}">Ask purchasing</button><button class="btn small" data-buyplan="${esc(id)}">Change the plan</button><button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button></div>
       ${S.ask && S.ask.item === id ? askFormHtml(S.ask, it) : ""}
