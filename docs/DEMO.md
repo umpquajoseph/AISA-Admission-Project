@@ -15,7 +15,7 @@ About 6 minutes. October is made up from the real September files and says so on
 | # | Click | Say |
 |---|---|---|
 | 1 | Nothing yet: point at the five steps across the top | "Every month is the same five steps. Back and Next walk me through them." |
-| 2 | **Next day ▶** three times, to Fri Oct 9 (one day per click) | "Sheets arrive from the six regions. Each box says how many lines need me." |
+| 2 | **Next day ▶** three times, to Fri Oct 9 (one day per click) | "Sheets arrive from the six regions through the week. Each box says how many lines need me." |
 | 3 | **Cascadia** box | "Every number is in cases, even where the region wrote bottles. Orange needs a look." |
 | 4 | Black tea sachets, Feb '27, the red **“tbc”** → type `80` → Enter | "I can correct anything a region sends. It is logged, with Undo." |
 | 5 | **Check Cascadia's 1 line**, then **Check the other … lines** | "Only unusual lines come here, checked against last year's shipments and sales. Everything else goes in as asked." |

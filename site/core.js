@@ -347,7 +347,7 @@
       for (const x of inputsAt(T)) if (x.thread) (th[x.thread] = th[x.thread] || { id: x.thread, kind: x.kind, items: [] }).items.push(x);
       return Object.values(th).map(t => {
         const f = t.items[0];
-        t.title = t.kind === "email" ? f.mail.subject.replace(/^((re|fw|fwd):\s*)+/i, "") : `${f.event.id} · ${f.event.type}`;
+        t.title = t.kind === "email" ? f.mail.subject.replace(/^((re|fw|fwd):\s*)+/i, "") : `${f.event.type}, ${new Date(f.event.event_date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
         t.region = (t.items.find(x => x.region) || {}).region || null;
         t.last = t.items[t.items.length - 1].date;
         return t;
