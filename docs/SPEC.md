@@ -184,7 +184,7 @@ For each region × SKU × month:
 - **Draft changes from emails.** Paste an email and the assistant drafts a change
   request with the source sentence quoted. The planner approves it before
   anything changes. Emails are untrusted input, so nothing applies itself.
-- **Cost and limits.** Claude Opus 5.5. Paid from the existing API credit, with a
+- **Cost and limits.** Claude Sonnet 5.5 at high effort. Paid from the existing API credit, with a
   spend limit set on the workspace.
 
 ### 5.6 Outputs
