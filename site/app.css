@@ -333,7 +333,7 @@ svg.chart .pt.sales { fill: var(--ok); }
 /* demo walkthrough (tour.js): a popup beside the thing to click, and a ring that lets clicks through */
 .tourring { position: fixed; z-index: 50; pointer-events: none; border: 2px solid var(--accent); box-shadow: 0 0 0 4px rgba(47, 111, 214, .18); }
 .tourbox { position: fixed; z-index: 51; pointer-events: none; width: 340px; max-width: calc(100vw - 16px); background: var(--card); border: 1px solid var(--accent); box-shadow: 0 6px 24px rgba(28, 30, 33, .16); padding: var(--s) var(--m) var(--m); display: flex; flex-direction: column; gap: 6px; }
-.tourtop { display: flex; align-items: center; justify-content: space-between; }
+.tourtop { display: flex; align-items: center; justify-content: space-between; pointer-events: auto; cursor: move; touch-action: none; user-select: none; }
 .tourtop .hint { font-size: var(--f-small); }
 .tourclick b { font-weight: 600; }
 .tourshows { font-weight: 500; }
