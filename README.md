@@ -1,9 +1,10 @@
 # Supply Desk
 
-A working prototype for the central supply planner. Sheets and emails come in,
-the desk shows what needs a decision, the planner changes the plan with a reason,
-and every arrival and change stays in the history. A time slider replays the
-packet day by day. Spec: [docs/SPEC.md](docs/SPEC.md).
+A working prototype for Dutch Bros' central supply planner. The six regional
+sheets come in, the app drafts the plan, the planner settles only the lines
+that look wrong, publishes, logs late news as typed changes, and hands
+purchasing one list of what changed and why. Design:
+[docs/WORKFLOW.md](docs/WORKFLOW.md). Original spec: [docs/SPEC.md](docs/SPEC.md).
 
 ## Run it locally
 
@@ -11,32 +12,30 @@ The packet folder `Dutch_Bros_Techincal_Packet/` must sit in this folder (it is
 git-ignored).
 
 ```powershell
+python -I pipeline/make_synthetic.py
 python -I pipeline/build_data.py
-python -m http.server 8765 --bind 127.0.0.1 --directory site
+npm install
+npm run dev
 ```
 
-Then open http://127.0.0.1:8765. `?example=1` loads the September worked
-example on a fresh browser.
+Open http://127.0.0.1:8788. For the assistant, put `ANTHROPIC_API_KEY=...` in a
+git-ignored `.dev.vars`; without it the AI buttons say "Assistant not connected".
 
-## How it fits together
-
-One record, three views, plus Ask. The slider sets the desk's date; everything you add or
-change is dated to it, so moving the slider back shows the desk as it stood.
-
-| View | What it does |
+| Link | Opens |
 |---|---|
-| Inbox | What needs a decision: new sheets that differ from the plan (use the request or keep the plan, per line or all), and messages grouped by thread (change the plan, no change, waiting on someone). A reply reopens a thread. Add sheets and emails by pasting, dropping a file, or watching a folder. Click a region's sheet to see every line as read, with conversions and corrections |
-| Plan | One month at a time, regions across, network total. Click a number for its source, request, checks and every plan file's value. Type to change it, or add/move with a reason; EA converts to cases. Publish makes the working plan the plan in force |
-| History | Everything that arrived or changed, newest first; trends per item (each posted plan, the requests, sales-implied use); compare any two versions |
-| Ask | Placeholder: questions about the record and AI-drafted changes, once the assistant is connected |
+| `/?example=1` | September done (published, late news logged), ready for October |
+| `/?role=manager` | A regional manager's page; in a second tab it feeds the planner's Inbox live |
 
-Files: `pipeline/build_data.py` bundles the packet raw. `site/core.js` reads
-every sheet and email (packet or added, one reader) and works out the plan as of
-a date. `site/app.js` draws it. The browser reader matches the old Python reader
-on all 43 packet sheets and 23 emails.
+## Screens
 
-The desk record (inputs added, changes, decisions, versions) lives in the
-browser; export and import it from History.
+| Tab | What it is for |
+|---|---|
+| Inbox | Six region tiles (drop a sheet on one), plan messages, Log a change or Draft with AI |
+| Review | Only the lines that fail a check against shipments and sales, grouped by item |
+| Plan | The draft until published, then the plan in force; click a number for its story |
+| Release | Released vs proposed, why, open questions, scenarios; export for purchasing |
+| History | Everything that happened; trends; compare versions |
+| Ask | Questions answered from the record, with sources |
 
-Not built yet: the AI assistant that drafts changes from an email or a raw
-dump, shipment checks from the Distribution files, the Cloudflare deploy.
+Data: September 2026 is real (the packet stops Sep 18). October is synthetic,
+built from the real files by `pipeline/make_synthetic.py`, and labelled on screen.

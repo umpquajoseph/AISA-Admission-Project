@@ -4,8 +4,25 @@
     {
       "name": "supply-desk",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", "site"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "site"
+      ],
       "port": 8765
+    },
+    {
+      "name": "supply-desk-api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 8788
     }
   ]
 }

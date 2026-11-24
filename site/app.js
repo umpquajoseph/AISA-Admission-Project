@@ -89,6 +89,15 @@ function jump(dir) {
 
 /* ------------------------------------------------------------ shell */
 const ROLE = new URLSearchParams(location.search).get("role") === "manager" ? "manager" : "planner";
+const AI = { connected: false, checked: false };
+fetch("/api/status").then(r => r.ok ? r.json() : null).then(j => { AI.checked = true; AI.connected = !!(j && j.connected); AI.server = !!j; render(); }).catch(() => { AI.checked = true; render(); });
+async function aiCall(path, body) {
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    return r.ok ? j : { error: j.error || `HTTP ${r.status}` };
+  } catch (e) { return { error: "Assistant server not running" }; }
+}
 function render() { indexArrivals(); if (ROLE === "manager") return renderManager(); renderClock(); renderPage(); }
 window.addEventListener("storage", e => {                  // another tab (the manager page) changed the record
   if (e.key === KEY + "record") { R = { ...emptyRecord(), ...load("record", {}) }; desk = C.Desk(D, R); render(); }
@@ -144,7 +153,9 @@ function pageInbox() {
     return `<div class="mrow ${open ? "open" : ""} ${t.reopened ? "new" : ""}">
       <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${th.kind}">${th.kind === "email" ? "Email" : "Calendar"}</span><b>${esc(th.title)}</b>${th.region ? `<span class="reg">${esc(regName(th.region))}</span>` : ""}${th.items.length > 1 ? `<span class="hint">${th.items.length}</span>` : ""}<span class="hint">${dlabel(last.date)}</span>${waiting ? `<span class="pill Scenario" title="${esc(t.decision.note || "")}">waiting</span>` : ""}</div>
       ${open ? `<div class="mbody">${th.items.map((x, i) => msgHtml(x, i === th.items.length - 1 || S.open[id + ":all"])).join("")}
-        <div class="acts"><button class="btn small primary" data-work="${esc(id)}">Log a change</button><button class="btn small" data-decide="${esc(id)}|no-change">No change</button>${waiting ? "" : `<button class="btn small" data-decide="${esc(id)}|waiting">Waiting on…</button>`}</div>
+        <div class="acts"><button class="btn small ai" data-aidraft="${esc(id)}" ${AI.connected ? "" : `title="Assistant not connected"`}>${S.aiBusy === id ? "Drafting…" : "Draft with AI"}</button><button class="btn small primary" data-work="${esc(id)}">Log a change</button><button class="btn small" data-decide="${esc(id)}|no-change">No change</button>${waiting ? "" : `<button class="btn small" data-decide="${esc(id)}|waiting">Waiting on…</button>`}</div>
+        ${S.aiNote && S.aiNote.thread === id ? `<div class="ainote ${S.aiNote.error ? "bad" : ""}">${esc(S.aiNote.text)}</div>` : ""}
+        ${(S.aiDrafts || []).map((c, i) => c.thread === id ? changeCardHtml(c, i) : "").join("")}
         ${S.cc && S.cc.thread === id ? changeCardHtml() : ""}
         ${S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}" autofocus><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : ""}</div>` : ""}
     </div>`;
@@ -179,6 +190,7 @@ function bindInbox() {
   document.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { S.sheetView = S.sheetView === b.dataset.sheet ? null : b.dataset.sheet; renderPage(); });
   document.querySelectorAll("[data-work]").forEach(b => b.onclick = () => { const th = desk.threadsAt(S.date).find(t => t.id === b.dataset.work); S.cc = newCard(th); renderPage(); });
   bindChangeCard();
+  document.querySelectorAll("[data-aidraft]").forEach(b => b.onclick = () => aiDraft(b.dataset.aidraft));
   document.querySelectorAll("[data-decide]").forEach(b => b.onclick = () => { const [target, outcome] = b.dataset.decide.split("|"); S.pending = { target, outcome }; renderPage(); setTimeout(() => $("decNote") && $("decNote").focus()); });
   const df = $("decForm");
   if (df) {
@@ -226,6 +238,7 @@ function changeCardHtml(c = S.cc, idx = null) {
     </div>`}
     <input type="text" data-f="reason" value="${esc(c.reason)}" placeholder="Why (purchasing reads this)">
     ${c.quote ? `<div class="quote">“${esc(c.quote)}”</div>` : ""}
+    ${c.checks && c.checks.length ? `<div class="warn-text">${c.checks.map(esc).join(" · ")}</div>` : ""}
     <div class="row"><span class="calc">${esc(cardCalc(c))}</span><span class="spacer"></span><button class="btn small primary">${c.ai ? "Approve" : "Save"}</button><button type="button" class="btn small" data-cclose="${k}">${c.ai ? "Reject" : "Close"}</button></div>
   </form>`;
 }
@@ -239,12 +252,26 @@ function bindChangeCard() {
       e.preventDefault();
       const c = get();
       if (c.type !== "hold" && isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
-      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: c.type === "hold" ? "" : `${c.region}|${c.sku}|${c.month}`, qty: c.type === "hold" ? null : +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai });
+      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: c.type === "hold" ? "" : `${c.region}|${c.sku}|${c.month}`, qty: c.type === "hold" ? null : +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
       R.decisions.push({ id: uid("d"), date: S.date, target: c.thread, outcome: c.type === "hold" ? "waiting" : "changed", note: c.reason });
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
       commit();
     };
   });
+}
+async function aiDraft(threadId) {
+  if (S.aiBusy) return;
+  const th = desk.threadsAt(S.date).find(t => t.id === threadId); if (!th) return;
+  S.aiBusy = threadId; S.aiNote = null; S.aiDrafts = (S.aiDrafts || []).filter(c => c.thread !== threadId); renderPage();
+  const j = await aiCall("/api/draft", { message: desk.messageText(threadId, S.date), context: desk.assistantContext(S.date, { focus: threadId }) });
+  S.aiBusy = null;
+  if (j.error) S.aiNote = { thread: threadId, text: j.error, error: true };
+  else {
+    const def = newCard(th);
+    for (const c of j.changes || []) S.aiDrafts.push(newCard(th, { ...c, ref: c.ref || def.ref, region: c.region || def.region, sku: c.sku || def.sku, month: c.month || def.month, qty: c.qty ?? "", unit: c.unit || "CS", ai: true }));
+    S.aiNote = { thread: threadId, text: j.note || (j.changes && j.changes.length ? "" : "No change drafted.") };
+  }
+  S.open[threadId] = true; renderPage();
 }
 function threadTitle(id) { const t = desk.threadsAt(S.date).find(x => x.id === id); return t ? t.title : id; }
 function guessMonth(th) {
@@ -792,14 +819,25 @@ function histCompare() {
 
 /* ------------------------------------------------------------ Ask (placeholder until the assistant is connected) */
 function pageAsk() {
-  const examples = ["What changed since the Sep 11 plan, and why?", "Why is Gulf Coast mango 259 in October?", "Which messages still need a decision before Monday's buy review?", "Draft the changes this email asks for."];
-  $("page").innerHTML = `
-    <h1>Ask</h1>
-    <div class="hint">Questions about the desk as of ${dlong(S.date)}. The assistant answers from this desk's record only and names the sheet, email or change behind each answer. It can also draft changes from an email or a pasted dump; drafts wait in the Inbox for you to approve.</div>
-    <div class="askbox"><textarea disabled placeholder="Ask about the plan, a sheet, an email or a change"></textarea><button class="btn primary" disabled>Ask</button></div>
-    <div class="empty">Not connected yet. It goes live once the assistant is wired to the Claude API, with the key kept on a server and never in this page.</div>
-    <h2>Questions it will answer</h2>
-    <div class="list">${examples.map(q => `<div class="item">${esc(q)}</div>`).join("")}</div>`;
+  const examples = ["Why did Gulf Coast mango October change?", "What changed since the last published plan?", "What is still an open question?"];
+  const hist = S.asks || [];
+  $("page").innerHTML = `<div class="ask">
+    <form class="askbox" id="askForm"><textarea id="askQ" placeholder="Ask about the plan, a sheet, an email or a change">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : "Ask"}</button></form>
+    ${AI.checked && !AI.connected ? `<div class="ainote bad">${AI.server ? "Assistant not connected: add the API key" : "Assistant server not running (npm run dev)"}</div>` : ""}
+    ${hist.length ? "" : `<div class="chips">${examples.map(q => `<button class="chip" data-askex="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
+    ${hist.map(h => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer)}</div><div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}</div></div>`).join("")}
+  </div>`;
+  const ask = async q => {
+    if (!q.trim() || S.asking) return;
+    S.asking = true; S.askQ = q; renderPage();
+    const j = await aiCall("/api/ask", { question: q, context: desk.assistantContext(S.date) });
+    S.asking = false; S.askQ = "";
+    (S.asks = S.asks || []).unshift({ q, date: S.date, ...(j.error ? { error: j.error } : j) });
+    renderPage();
+  };
+  $("askForm").onsubmit = e => { e.preventDefault(); ask($("askQ").value); };
+  $("askQ").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(e.target.value); } };
+  document.querySelectorAll("[data-askex]").forEach(b => b.onclick = () => ask(b.dataset.askex));
 }
 
 /* ------------------------------------------------------------ Manager page: a regional manager sends a sheet or a late request */

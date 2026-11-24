@@ -280,3 +280,15 @@ table.review tr.grp td { font-weight: 400; }
 .ccard.ai { border-color: #8e6bd6; background: #f6f2fd; }
 .ccard input[data-f="reason"] { width: 100%; }
 .ccard .calc { font-family: var(--mono); font-size: var(--f-mono); color: var(--fg); }
+
+/* assistant */
+.btn.ai { border-color: #8e6bd6; color: #5b3fb0; }
+.btn.ai:hover { background: #f6f2fd; }
+.ainote { font-size: var(--f-hint); color: #5b3fb0; margin-top: 6px; }
+.ainote.bad { color: var(--err); }
+.ask { max-width: 900px; }
+.ask .chips { margin: var(--s) 0; }
+.qa { background: var(--card); border: 1px solid var(--border); padding: var(--s) var(--m); margin-top: var(--s); }
+.qa .q { font-weight: 700; }
+.qa .a { margin: 4px 0; }
+.qa .cites { display: flex; gap: 4px; flex-wrap: wrap; }
