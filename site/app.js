@@ -228,19 +228,28 @@ function pageSheet(X) {
       const tip = [c.problem, c.rule.join("; "), c.orig != null && c.unit === "EA" ? `sheet says ${fmt(c.orig)} ${units(i.sku)}` : "", diff ? `earlier copy: ${p ? fmt(p.cs) : "blank"}` : "", c.note].filter(Boolean).join(" · ");
       const cls = ["cell", c.problem ? "problem" : openKeys.has(key) ? "check" : "", c.edited ? "edited" : "", c.carried_from ? "carried" : "", diff ? "changed" : ""].join(" ");
       return `<td class="${cls}" data-cell="${key}" title="${esc(tip)}" tabindex="0">${c.cs == null ? (c.raw ? `“${esc(c.raw)}”` : "blank") : fmt(c.cs)}</td>`;
-    }).join("")}</tr>`;
+    }).join("")}<td><button class="btn small link" data-rmline="${i.sku}" title="Remove this line from the sheet">×</button></td></tr>`;
   }).join("");
   const edited = Object.values(s.cells).filter(c => c.edited);
+  const gone = {}; for (const [k, e] of Object.entries(s.removedLines || {})) (gone[k.split("|")[1]] = gone[k.split("|")[1]] || []).push(k);
   $("page").innerHTML = `
     ${head(`${esc(regName(code))} · ${X.month} sheet`, `Sent ${dlabel(s.date)}${s.author ? ` by ${esc(s.author)}` : ""}${prev ? `, replacing the ${dlabel(prev.date)} copy` : ""}. It asks for ${months.length} months ahead, ${mlabel(months[0])} to ${mlabel(months[months.length - 1])}, every number in cases. Click a number to correct it.`)}
+    <div class="acts"><label class="btn small">Replace sheet<input type="file" id="replaceFile" accept=".xlsx,.xls,.csv" hidden></label></div>
     ${X.pub ? `<div class="okline">The ${X.month} plan was published ${dlabel(X.pub.date)}. A correction here no longer changes it; change the plan itself under Publish.</div>` : open.length ? `<div class="tocheck"><b>${plural(open.length, "line")} to check</b><ul>${open.map(l => `<li class="jump" ${l.sku ? `data-jump="${esc(l.key)}"` : ""}>${l.sku ? `${esc(itemName(l.sku))}, ${mlabel(l.month)}` : `Row ${l.row}`}: ${esc(l.why)}</li>`).join("")}</ul></div>` : `<div class="okline">Nothing on this sheet needs checking.</div>`}
     <div class="legend"><span><i class="key check"></i>to check</span><span><i class="key problem"></i>could not be read</span><span><i class="key edited"></i>your correction</span>${s.counts.carried ? `<span><i class="key carried"></i>blank, carried from last month</span>` : ""}${prev ? `<span><i class="key changed"></i>changed from the earlier copy</span>` : ""}</div>
-    <div class="gridwrap"><table class="grid sheet"><tr><th class="l">Item</th><th class="l">Sent in</th>${months.map(m => `<th>${mlabel(m)}</th>`).join("")}</tr>${rows}</table></div>
-    ${edited.length ? `<h2>Your corrections</h2><ul class="plainlist">${edited.map(c => `<li>${esc(itemName(c.sku))}, ${mlabel(c.month)}: ${c.edited.was == null ? "blank" : esc(typeof c.edited.was === "string" ? c.edited.was : fmt(c.edited.was))} → <b>${fmt(c.cs)}</b> <span class="hint">${dlabel(c.edited.date)}</span> <button class="btn small link" data-unedit="${esc(`${code}|${c.sku}|${c.month}`)}">Undo</button></li>`).join("")}</ul>` : ""}
+    <div class="gridwrap"><table class="grid sheet"><tr><th class="l">Item</th><th class="l">Sent in</th>${months.map(m => `<th>${mlabel(m)}</th>`).join("")}<th></th></tr>${rows}</table></div>
+    <form class="inline" id="addLine"><select id="alItem">${D.items.map(i => `<option value="${i.sku}">${esc(i.name)}</option>`).join("")}</select><select id="alMonth">${months.map(m => `<option value="${m}">${mlabel(m)}</option>`).join("")}</select><input type="number" id="alQty" min="0" step="any" placeholder="cases" style="width:76px"><button class="btn small">Add a line</button></form>
+    ${edited.length || Object.keys(gone).length ? `<h2>Your corrections</h2><ul class="plainlist">${edited.map(c => `<li>${esc(itemName(c.sku))}, ${mlabel(c.month)}: ${c.edited.was == null ? "added" : `${esc(typeof c.edited.was === "string" ? c.edited.was : fmt(c.edited.was))} →`} <b>${fmt(c.cs)}</b> <span class="hint">${dlabel(c.edited.date)}</span> <button class="btn small link" data-unedit="${esc(`${code}|${c.sku}|${c.month}`)}">Undo</button></li>`).join("")}${Object.entries(gone).map(([sku, keys]) => `<li>${esc(itemName(sku))}: removed from the sheet <button class="btn small link" data-unrm="${esc(keys.join(","))}">Undo</button></li>`).join("")}</ul>` : ""}
     <div class="more"><button class="btn link" data-toggle="sheetmore">${S.open.sheetmore ? "▾" : "▸"} File details and remove</button>${S.open.sheetmore ? `<div class="morebody"><div class="hint">${esc(short(s.src))} · layout “${esc(s.layout)}” · ${plural(s.counts.cells, "line")} read · ${s.counts.ea} converted from ${esc("bottles, bags and other units")} · ${s.counts.cancelled} zeros (month cancelled)${s.meta && s.meta.note ? ` · desk note: ${esc(s.meta.note)}` : ""}</div><button class="btn danger" id="removeSheet">Remove this sheet</button> <span class="hint">It drops out of every screen${prev ? `; the ${dlabel(prev.date)} copy counts again` : ""}. You can restore it from Sheets in.</span></div>` : ""}</div>`;
   document.querySelectorAll("[data-jump]").forEach(li => li.onclick = () => { const td = document.querySelector(`td[data-cell="${CSS.escape(li.dataset.jump)}"]`); if (td) { td.scrollIntoView({ block: "center" }); td.focus(); } });
   document.querySelectorAll("td[data-cell]").forEach(td => { td.onclick = () => editReportCell(td, s); td.onkeydown = e => { if (e.key === "Enter") editReportCell(td, s); }; });
   document.querySelectorAll("[data-unedit]").forEach(b => b.onclick = () => { R.reportEdits.push({ id: uid("re"), date: S.date, sheet: s.id, key: b.dataset.unedit, cs: null, reason: "Undone" }); commit(); });
+  const edit = (key, extra) => R.reportEdits.push({ id: uid("re"), date: S.date, sheet: s.id, key, ...extra });
+  document.querySelectorAll("[data-rmline]").forEach(b => b.onclick = () => { for (const k of Object.keys(s.cells).filter(k => k.split("|")[1] === b.dataset.rmline)) edit(k, { cs: null, removed: true, reason: "Line removed by the head manager" }); commit(); });
+  document.querySelectorAll("[data-unrm]").forEach(b => b.onclick = () => { for (const k of b.dataset.unrm.split(",")) edit(k, { cs: null, reason: "Undone" }); commit(); });
+  $("addLine").onsubmit = e => { e.preventDefault(); const v = parseFloat($("alQty").value); if (isNaN(v) || v < 0) return $("alQty").focus(); edit(`${code}|${$("alItem").value}|${$("alMonth").value}`, { cs: v, reason: "Line added by the head manager" }); commit(); };
+  // a new file for this region and month: read it and open it under Sheets in, region and month already set
+  $("replaceFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; const p = await readInput(f.name, f); if (p.kind === "sheet") { p.region = code; p.cycle = cyc; resolvePreview(p); } S.preview = p; S.open.add = true; go("sheets"); };
   const rm = $("removeSheet"); if (rm) rm.onclick = () => { R.removed.push({ id: uid("rm"), date: S.date, input: s.id, label: `${regName(code)} ${X.month} sheet, ${short(s.src)}` }); S.region = null; commit(); };
   toggles();
   foot({ back: backAll, main: open.length ? { label: `Check ${regName(code)}'s ${plural(open.length, "line")}`, act: () => go("check", { checkRegion: code }) } : { label: "Back to all sheets", act: () => go("sheets") } });
@@ -794,6 +803,7 @@ function pageSend(X) {
 function addBoxHtml() {
   const p = S.preview;
   return `<div class="addbox" id="addbox">
+    ${p ? "" : `<div class="hint">Region and month are chosen after the file is read.</div>`}
     <textarea id="pasteBox" placeholder="Paste a sheet or an email here, or drop a file on this box">${esc(S.pasteText || "")}</textarea>
     <div class="acts"><button class="btn primary" id="readPaste">Read it</button>
       <label class="btn">Choose file<input type="file" id="fileIn" accept=".xlsx,.xls,.csv,.eml,.txt" multiple hidden></label>
@@ -806,7 +816,7 @@ function previewHtml(p) {
   if (p.error) return `<div class="preview bad"><b>Could not read ${esc(p.name)}.</b><div>${esc(p.error)}</div><div class="acts"><button class="btn small" id="pvCancel">Dismiss</button></div></div>`;
   if (p.kind === "sheet") {
     const r = p.res, cyc = p.cycle;
-    const cycles = [...new Set(p.read.entries.map(e => e.month).filter(Boolean))].sort();
+    const cycles = [...new Set([...p.read.entries.map(e => e.month), cyc].filter(Boolean))].sort();
     return `<div class="preview">
       <div class="hint">Read as a request sheet</div>
       <div class="kv"><div>Region</div><div><select id="pvRegion">${D.regions.map(g => `<option value="${g.code}" ${g.code === p.region ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div>
@@ -971,7 +981,7 @@ function logEntries(T) {
   }
   for (const e of (R.reportEdits || []).filter(e => e.date <= T)) {
     const [r, sku, m] = e.key.split("|");
-    out.push({ date: e.date, kind: "you", text: e.cs == null ? `You undid your correction to ${esc(regName(r))}'s sheet: ${esc(itemName(sku))} · ${mlabel(m)}.` : `You corrected ${esc(regName(r))}'s sheet: ${esc(itemName(sku))} · ${mlabel(m)} to <b>${fmt(e.cs)}</b> cases.` });
+    out.push({ date: e.date, kind: "you", text: e.removed ? `You removed ${esc(itemName(sku))} · ${mlabel(m)} from ${esc(regName(r))}'s sheet.` : e.cs == null ? `You undid your correction to ${esc(regName(r))}'s sheet: ${esc(itemName(sku))} · ${mlabel(m)}.` : `You corrected ${esc(regName(r))}'s sheet: ${esc(itemName(sku))} · ${mlabel(m)} to <b>${fmt(e.cs)}</b> cases.` });
   }
   for (const x of (R.removed || []).filter(x => x.date <= T)) out.push({ date: x.date, kind: "you", text: `You removed ${esc(x.label || x.input)}.` });
   for (const d of R.decisions.filter(d => d.date <= T)) {

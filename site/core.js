@@ -286,8 +286,12 @@
       x.cycle = x.cycle || guessCycle(read);
       const earlier = Object.keys(lastOf).filter(k => k.startsWith(x.region + "|") && k.split("|")[1] < x.cycle).sort().pop();
       const res = resolveSheet(read, x.region, x.cycle, earlier ? lastOf[earlier].cells : null, ref);
+      x.removedLines = {};
       for (const e of Object.values(REDIT)) {
-        if (e.sheet !== x.id || e.cs == null || e.cs === "") continue;
+        if (e.sheet !== x.id) continue;
+        // a line the head manager took off the sheet: gone from every screen until undone
+        if (e.removed) { if (res.cells[e.key]) { x.removedLines[e.key] = e; delete res.cells[e.key]; res.issues = res.issues.filter(i => i.key !== e.key); } continue; }
+        if (e.cs == null || e.cs === "") continue;
         const [, sku, month] = e.key.split("|");
         const cell = res.cells[e.key] || (res.cells[e.key] = { sku, month, local: null, unit: "CS", orig: null, row: null, note: "", rule: [], cycle: x.cycle });
         cell.edited = { was: cell.cs == null ? (cell.raw != null ? `“${cell.raw}”` : null) : cell.cs, problem: cell.problem || null, date: e.date, reason: e.reason || "", id: e.id };
@@ -872,10 +876,12 @@
         } else if (j.type === "Void line") {
           const re = (j.comment.match(/PO-\d+\/\d+/) || [])[0], rl = re && lines.find(x => x.id === re);
           const rj = rl && PO.journal.find(x => x.type === "Replacement issued" && `${x.po}/${x.line}` === re && x.at.slice(0, 10) <= T);
-          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `Change ${rj.no}`,
-            title: `${name(l.sku)}: ${fmt(rl.qty)} cases reissued on ${rl.po}, due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `I voided ${j.po}/${j.line} and reissued it on ${re}.`,
-            done: rl.open === 0 ? "received" : null, prefill: { action: "rush", qty: rl.qty, by: [l.due0, addD(T, 2)].sort().pop(), po: rl.id }, change: changeInit(l.sku, l.month) });
-          else items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases voided`, text: `I voided ${j.po}/${j.line} and there is no replacement order. Should I order ${fmt(l.qty)} again?`,
+          // the buyer's note names the new order: the same cases are coming, so nothing needs a person
+          // until it is issued, and then only if it arrives later than the cancelled one
+          if (rl && rj) { if (rl.due0 > l.due0) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `Change ${rj.no}`,
+            title: `${name(l.sku)}: ${fmt(rl.qty)} cases now due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `I moved these ${fmt(rl.qty)} cases from ${j.po} to a new order, ${rl.po}. They now arrive ${dl(rl.due0)} instead of ${dl(l.due0)}. Should I rush them?`,
+            done: rl.open === 0 ? "received" : null, prefill: { action: "rush", qty: rl.qty, by: [l.due0, addD(T, 2)].sort().pop(), po: rl.id }, change: changeInit(l.sku, l.month) }); }
+          else if (!re) items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases cancelled`, text: `I cancelled ${j.po} and nothing replaces it. Should I order ${fmt(l.qty)} cases again?`,
             prefill: { action: "more", qty: l.qty, by: [l.due0, addD(T, lead(l.sku))].sort().pop(), po: "" }, change: changeInit(l.sku, l.month) });
         }
       }
