@@ -111,9 +111,9 @@ a[data-goto]:hover, a.lnk:hover { text-decoration: underline; }
 
 .pill { display: inline-block; padding: 0 6px; font-size: 11.5px; border: 1px solid var(--border); background: var(--bg); white-space: nowrap; }
 .pill.plan { background: #e6f4e6; border-color: #b9dcb9; color: #1f6b1f; }
-.pill.sheet { background: var(--group); border-color: #c2d3ee; color: #1d4f9e; }
-.pill.Scenario { background: var(--warn-bg); border-color: #f0d29b; color: var(--warn); }
-.pill.email, .pill.msg, .pill.calendar { background: #f1f2f4; }
+.pill.sheet, .pill.much { background: var(--group); border-color: #c2d3ee; color: #1d4f9e; }
+.pill.Scenario, .pill.short, .pill.late { background: var(--warn-bg); border-color: #f0d29b; color: var(--warn); }
+.pill.email, .pill.msg, .pill.calendar, .pill.request { background: #f1f2f4; }
 .pill.you { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .btn { border: 1px solid var(--border); background: var(--card); padding: 4px 12px; cursor: pointer; }

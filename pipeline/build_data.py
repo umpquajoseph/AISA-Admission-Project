@@ -252,6 +252,39 @@ def read_shops():
     return out
 
 
+# ---------------------------------------------------------------- purchasing
+def read_purchasing(folder):
+    """The buyer's watch list (Purchasing/Exports): PO lines, the buyer change journal, posted
+    receipts and the requisition tray. The page works out each line's state on any date from
+    the journal and receipt dates, so only the facts that carry a date are bundled. Quantities
+    are cases. The notes say this is a slice of one buyer's desk, not network coverage or stock."""
+    def rows(prefix):
+        out = []
+        for p in sorted(Path(folder).glob(prefix + "_*.csv")):
+            out += list(csv.DictReader(open(p, newline="", encoding="utf-8-sig")))
+        return out
+    def qty(v):
+        v = (v or "").strip()
+        return int(float(v)) if v else None
+    lines = [dict(po=r["po_number"], line=r["po_line"], supplier=r["supplier_name"], entered=r["entered_on"],
+                  location=r["delivery_location"], allocation=r["allocation"], sku=r["item_no"], item=r["description"],
+                  qty=qty(r["original_order_qty"]), due0=r["initial_due_date"],
+                  snap=dict(cancelled=qty(r["cancelled_qty"]), received=qty(r["posted_received_qty"]),
+                            open=qty(r["open_qty"]), due=r["current_due_date"] or None, status=r["line_status"]))
+             for r in rows("PO_line_status")]
+    journal = [dict(no=r["change_no"], at=r["entered_local"], po=r["po_number"], line=r["po_line"],
+                    type=r["change_type"], old=r["old_value"], new=r["new_value"], ref=r["evidence_ref"],
+                    comment=r["buyer_comment"]) for r in rows("Buyer_change_journal")]
+    receipts = [dict(no=r["receipt_no"], rline=r["receipt_line"], at=r["posted_local"], supplier=r["supplier_code"],
+                     po=r["po_number"], line=r["po_line"], sku=r["item_no"], qty=qty(r["posted_qty"]),
+                     slip=r["packing_slip"]) for r in rows("Receipt_journal")]
+    reqs = [dict(id=r["request_id"], at=r["entered_local"], by=r["requested_by"], item=r["item_or_family"],
+                 need=r["need_date"] or None, qty=qty(r["requested_quantity"]), uom=r["request_uom"] or None,
+                 state=r["current_state"], po=r["po_link"] or None, scope=r["scope"], note=r["original_note"])
+            for r in rows("Requisition_tray")]
+    return dict(lines=lines, journal=journal, receipts=receipts, requisitions=reqs)
+
+
 # ---------------------------------------------------------------- synthetic October
 def bundle_synthetic():
     """The made-up October cycle in synthetic/ (pipeline/make_synthetic.py), bundled raw
@@ -269,7 +302,8 @@ def bundle_synthetic():
     events = [dict(id=r["Event ID"], known_on=r["Known on"], region=r["Region"], type=r["Type"],
                    event_date=r["Event date"], status=r["Status"], detail=r["Detail"])
               for r in csv.DictReader(open(d / "calendar.csv", newline="", encoding="utf-8"))]
-    return dict(submissions=subs, emails=emails, events=events)
+    purchasing = read_purchasing(d / "purchasing") if (d / "purchasing").exists() else None
+    return dict(submissions=subs, emails=emails, events=events, purchasing=purchasing)
 
 
 # ---------------------------------------------------------------- main
@@ -293,6 +327,7 @@ def main():
         releases=releases, submissions=submissions, emails=emails,
         sales_use=sales, sales_through="2026-09-18",
         shipments=read_shipments(), shops=read_shops(), synthetic=bundle_synthetic(),
+        purchasing=read_purchasing(PACKET / "Purchasing/Exports"),
         sales_drinks=[dict(menu_id=m, sku=s, name=menu.get(m, {}).get("menu_description") or
                            menu.get(m, {}).get("name")) for m, s in std_drinks],
     )

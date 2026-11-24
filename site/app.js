@@ -17,7 +17,7 @@ const SIDE = [["history", "History"], ["ask", "Ask"]];
 const KEY = "supplydesk.v3.";
 function load(k, d) { try { const v = localStorage.getItem(KEY + k); return v ? JSON.parse(v) : d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch (e) { alert("This browser would not save the desk record: " + e.message); } }
-const emptyRecord = () => ({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [] });
+const emptyRecord = () => ({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] });
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 let R = { ...emptyRecord(), ...load("record", {}) };
 let desk = C.Desk(D, R);
@@ -65,12 +65,18 @@ const nextMonth = d => { const [y, m] = d.split("-").map(Number); return m === 1
 
 /* ------------------------------------------------------------ the day control: "Day: Fri, Oct 9 · Next day ▶" */
 const ARRIVALS = {};                                      // date -> inputs that arrived that day
-function indexArrivals() { for (const k in ARRIVALS) delete ARRIVALS[k]; for (const x of desk.inputs) if (x.date >= START && x.date <= END) (ARRIVALS[x.date] = ARRIVALS[x.date] || []).push(x); }
+function indexArrivals() {
+  for (const k in ARRIVALS) delete ARRIVALS[k];
+  for (const x of desk.inputs) if (x.date >= START && x.date <= END) (ARRIVALS[x.date] = ARRIVALS[x.date] || []).push(x);
+  for (const it of desk.purchaseNews(END)) if ((it.kind === "short" || it.kind === "request") && it.date >= START) (ARRIVALS[it.date] = ARRIVALS[it.date] || []).push({ kind: "purchase", id: it.id });
+}
 function dayText(d) {
   const a = ARRIVALS[d] || []; if (!a.length) return "";
   const parts = [], sh = a.filter(x => x.kind === "sheet"), m = a.filter(x => x.kind === "email" || x.kind === "calendar").length;
   if (sh.length) parts.push(sh.length === 1 ? `${regName(sh[0].region)} sheet` : `${sh.length} sheets`);
   if (m) parts.push(plural(m, "message"));
+  const p = a.filter(x => x.kind === "purchase").length;
+  if (p) parts.push(`${p} from purchasing`);
   return parts.join(", ") + " arrived today";
 }
 const arrivalDays = () => [...new Set([...Object.keys(ARRIVALS), S.date])].filter(d => d >= "2026-08-15").sort();
@@ -121,7 +127,7 @@ function context() {
   const got = cyc ? D.regions.filter(r => desk.latestSheet(S.date, r.code, cyc)) : [];
   const pub = cyc ? R.versions.filter(v => v.cycle === cyc && v.date <= S.date).pop() || null : null;
   const late = lateSheets(pub), news = newsLists();
-  news.count = news.open.length + late.filter(x => x.pending).length;
+  news.count = news.open.length + late.filter(x => x.pending).length + news.buy.length;
   return { cyc, rv, got, missing: D.regions.filter(r => !got.includes(r)), pub, late, news, month: cyc ? mname(cyc) : "" };
 }
 function renderPage() {
@@ -138,7 +144,7 @@ function renderPage() {
     check: X.pub ? "done" : X.rv.open ? `${X.rv.open} to check` : X.rv.total != null ? "all checked" : "",
     publish: X.pub ? `published ${dlabel(X.pub.date)}` : "not yet",
     news: (X.news.count ? `${X.news.count} open` : "nothing open") + (X.news.waiting.length ? ` · ${X.news.waiting.length} waiting` : ""),
-    send: X.pub ? (() => { const n = desk.releaseList(S.date).rows.length; return n ? plural(n, "change") : "no changes yet"; })() : "after publishing",
+    send: X.pub ? (() => { const n = desk.releaseList(S.date).rows.length, o = desk.ordersAt(S.date).rows.length; return [n ? plural(n, "change") : o ? "" : "no changes yet", o ? plural(o, "order action") : ""].filter(Boolean).join(" · "); })() : "after publishing",
   };
   const stepI = STEPS.findIndex(([id]) => id === S.tab);
   $("rail").innerHTML = STEPS.map(([id, n], i) => `<button class="step ${S.tab === id ? "on" : ""} ${stepI > i ? "past" : ""} ${id === "check" && X.rv.open && !X.pub ? "warn" : ""}" data-step="${id}"><span class="no">${i + 1}</span><span class="nm">${n}</span><span class="st">${esc(railInfo[id])}</span></button>`).join("");
@@ -419,13 +425,23 @@ function detailHtml(key, pv) {
     ${req ? `<div><b>${req.cell.cs == null ? "blank" : fmt(req.cell.cs)}</b> cases ${req.cell.unit === "EA" && req.cell.orig != null ? `<span class="hint">= ${fmt(req.cell.orig)} ${esc(units(sku))}</span>` : ""}</div><div class="src"><a class="lnk" data-goto="sheet:${esc(req.sheet.id)}">${esc(regName(r))}'s sheet</a>, row ${req.cell.row ?? "—"}${req.cell.note ? " · " + esc(req.cell.note) : ""}</div>` : `<div class="hint">No sheet yet</div>`}
     <h4>Checks</h4>
     ${li.checks.map(c => `<div class="check ${c.ok ? "ok" : "bad"}" title="${esc(c.detail || "")}">${c.ok ? "✓" : "!"} ${esc(c.label || c.name)}</div>`).join("") || `<div class="hint">—</div>`}
+    <h4>On order</h4>
+    ${onOrderHtml(sku, m, pv)}
     <h4>Every version</h4>
     <table class="plain mini">${li.versions.map(x => `<tr><td>${dlabel(x.date)}</td><td>${esc(x.name)}</td><td class="n">${fmt(x.value)}</td></tr>`).join("")}</table>
     <div style="margin-top:8px"><button class="btn small link" data-goto="trend:${sku}|${r}">See the trend</button></div>`;
 }
+/* open orders for an item on the buyer's watch list, pooled for all regions */
+function onOrderHtml(sku, m, pv) {
+  const open = desk.poAt(S.date).filter(l => l.sku === sku && l.open > 0).sort((a, b) => (a.due || "").localeCompare(b.due || ""));
+  let net = 0; for (const r of D.regions) net += (pv.grid[r.code + "|" + sku] || {})[m] || 0;
+  return `${open.map(l => `<div>On order: <b>${esc(l.id)}</b>, ${plural(l.open, "case")}, due ${dlabel(l.due)}${l.month !== m ? ` <span class="hint">(for ${mlabel(l.month)})</span>` : ""}</div>`).join("") || `<div class="hint">Nothing open for this item on the buyer's watch list.</div>`}
+    <div class="hint">Pooled at Central Intake for all regions: ${fmt(net)} cases in the plan for ${mlabel(m)}. The watch list covers some orders only.</div>`;
+}
 function srcName(id) {
   const x = desk.byId[id]; if (x) return x.kind === "sheet" ? `${regName(x.region)} sheet, ${dlabel(x.date)}` : x.mail ? x.mail.subject : id;
-  const th = desk.threadsAt(END).find(t => t.id === id); return th ? th.title : id;
+  const th = desk.threadsAt(END).find(t => t.id === id); if (th) return th.title;
+  const b = desk.purchaseNews(S.date).find(i => i.id === id) || desk.purchaseNews(END).find(i => i.id === id); return b ? b.title : id;
 }
 function bindDetail(pv) {
   const key = S.sel, [r, sku, m] = key.split("|"), it = ITEMS[sku], f = $("dForm");
@@ -460,7 +476,7 @@ function newsLists() {
   const planAll = n.inputs.filter(t => isPlanThread(t.thread));
   // every message not yet decided stays open, whatever plan has been published since it arrived
   const byDate = (a, b) => a.thread.last.localeCompare(b.thread.last);
-  return { open: planAll.sort(byDate), other: n.inputs.filter(t => !isPlanThread(t.thread)), waiting: n.waiting };
+  return { open: planAll.sort(byDate), other: n.inputs.filter(t => !isPlanThread(t.thread)), waiting: n.waiting, buy: desk.purchaseNews(S.date).filter(i => i.open) };
 }
 /* a calendar entry is settled by the message that logs its change: the email names the event id,
  * or it comes from the same region within three days and the change is for the event's month */
@@ -472,10 +488,19 @@ function coveredCalendars(threadId, ref, month) {
     (!month || t.items.some(x => (x.event.event_date || "").slice(0, 7) === month))))).map(t => t.id);
 }
 function decideThread(target, outcome, note, ref, month) {
-  R.decisions.push({ id: uid("d"), date: S.date, target, outcome, note });
+  const ids = [uid("d")];
+  R.decisions.push({ id: ids[0], date: S.date, target, outcome, note });
   const cov = outcome !== "waiting" ? coveredCalendars(target, ref, month) : [];
-  for (const cal of cov) R.decisions.push({ id: uid("d"), date: S.date, target: cal, outcome: "no-change", note: `Covered by: ${threadTitle(target)}` });
-  return cov.length ? ` Closed with it: ${cov.map(threadTitle).join(", ")}.` : "";
+  for (const cal of cov) { const id = uid("d"); ids.push(id); R.decisions.push({ id, date: S.date, target: cal, outcome: "no-change", note: `Covered by: ${threadTitle(target)}` }); }
+  return { text: cov.length ? ` Closed with it: ${cov.map(threadTitle).join(", ")}.` : "", ids };
+}
+/* Undo from the Late news flash: take back the decisions, changes and asks of purchasing it made */
+function undoFlash(u) {
+  R.decisions = R.decisions.filter(d => !(u.decisions || []).includes(d.id));
+  for (const c of R.changes) if ((u.changes || []).includes(c.id)) c.removed_on = S.date;
+  for (const o of R.orders) if ((u.orders || []).includes(o.id)) o.removed_on = S.date;
+  S.flash = { tab: "news", text: "Undone. The item is open again." };
+  commit();
 }
 function pageNews(X) {
   const N = X.news;
@@ -488,18 +513,86 @@ function pageNews(X) {
         ${S.aiNote && S.aiNote.thread === id ? `<div class="ainote ${S.aiNote.error ? "bad" : ""}">${esc(S.aiNote.text)}</div>` : ""}
         ${(S.aiDrafts || []).map((c, i) => c.thread === id ? changeCardHtml(c, i) : "").join("")}
         ${S.cc && S.cc.thread === id ? changeCardHtml() : ""}
-        ${S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}"><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : ""}</div>` : ""}
+        ${decFormHtml(id)}</div>` : ""}
     </div>`;
   };
+  const items = [...N.open.map(t => ({ date: t.thread.last, html: row(t, false) })), ...N.buy.map(it => ({ date: it.date, html: buyRow(it) }))].sort((a, b) => a.date.localeCompare(b.date));
   $("page").innerHTML = `
-    ${head("Late news", `Emails, submanager requests and calendar entries since the last plan. Open each one: log the change it asks for, or mark it no change needed.`)}
-    ${S.flash && S.flash.tab === "news" ? `<div class="flash">${esc(S.flash.text)} <span class="hint">${S.flash.change ? "It is in History and under Send to purchasing." : "It is in History."}</span></div>` : ""}
+    ${head("Late news", `Emails, submanager requests, calendar entries and purchasing news since the last plan. Open each one: change the plan, ask purchasing, or mark it no change needed.`)}
+    ${S.flash && S.flash.tab === "news" ? `<div class="flash">${esc(S.flash.text)} <span class="hint">${S.flash.change || S.flash.order ? "It is in History and under Send to purchasing." : S.flash.undo ? "It is in History." : ""}</span>${S.flash.undo ? ` <button class="btn small link" id="flashUndo">Undo</button>` : ""}</div>` : ""}
     ${X.late.map(lateHtml).join("")}
-    <div class="mlist">${N.open.map(t => row(t, false)).join("") || (X.late.some(x => x.pending) ? "" : `<div class="okline">Nothing open. Use Next day ▶ at the top to see what arrives later.</div>`)}</div>
+    <div class="mlist">${items.map(x => x.html).join("") || (X.late.some(x => x.pending) ? "" : `<div class="okline">Nothing open. Use Next day ▶ at the top to see what arrives later.</div>`)}</div>
     ${N.waiting.length ? `<h2>Waiting on someone (${N.waiting.length})</h2><div class="mlist">${N.waiting.map(t => row(t, true)).join("")}</div>` : ""}
     ${N.other.length ? `<div class="more"><button class="btn link" data-toggle="other">${S.open.other ? "▾" : "▸"} Dock and orders (${N.other.length})</button>${S.open.other ? `<div class="mlist">${N.other.map(t => row(t, false)).join("")}</div>` : ""}</div>` : ""}`;
   bindNews();
   foot({ back: { label: "Publish", act: () => go("publish") }, note: N.count ? `${plural(N.count, "item")} still open` : "", main: { label: "Next: send to purchasing", act: () => go("send") } });
+}
+const decFormHtml = id => S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}"><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : "";
+/* purchasing news: a short or late order, too much on order, too late to order, a requisition */
+const PKIND = { short: "Short", much: "Too much", late: "Too late", request: "Request" };
+const ACTS = [["more", "Order more"], ["cut", "Cut the order"], ["rush", "Rush"]];
+const actWord = a => ({ more: "order more", cut: "cut the order by", rush: "rush" })[a] || a;
+function orderTable(lines) {
+  if (!lines.length) return `<div class="hint">No open order for this item on the buyer's watch list.</div>`;
+  return `<table class="plain mini"><tr><th>Order</th><th>Supplier</th><th class="n">Ordered</th><th class="n">Received</th><th class="n">Open</th><th>Due now</th><th></th></tr>
+    ${lines.map(l => `<tr><td>${esc(l.id)}</td><td>${esc(l.supplier)}</td><td class="n">${fmt(l.qty)}</td><td class="n">${fmt(l.received)}</td><td class="n"><b>${fmt(l.open)}</b></td><td>${l.due ? dlabel(l.due) : "—"}</td><td class="hint">${esc(l.status)}${l.cancelled ? `, ${fmt(l.cancelled)} cancelled` : ""}</td></tr>`).join("")}</table>`;
+}
+function buyRow(it) {
+  const id = it.id, open = S.open[id];
+  return `<div class="mrow ${open ? "open" : ""}">
+    <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${it.kind}">${PKIND[it.kind]}</span><b>${esc(it.title)}</b><span class="reg">${esc(it.region ? regName(it.region) : "All regions")}</span><span class="hint">${dlabel(it.date)}</span><span class="chev">${open ? "▾" : "▸"}</span></div>
+    ${open ? `<div class="mbody">
+      <div class="msg"><div class="hint">${esc(it.source)}${it.synthetic ? " · made up for rehearsal" : ""}</div><div>${esc(it.text)}</div>${it.quote ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}</div>
+      ${orderTable(it.lines)}
+      <div class="hint" style="margin-top:4px">${/^Plan for/.test(it.source) ? "" : esc(it.planText) + ". "}Orders are pooled at Central Intake for all regions. The watch list covers some orders only, and there is no stock-on-hand figure.</div>
+      ${it.asked.length ? `<div style="margin-top:4px">Already asked: ${it.asked.map(o => `${actWord(o.action)} ${fmt(o.qty)} cases by ${dlabel(o.by)} (${dlabel(o.date)})`).join("; ")}</div>` : ""}
+      <div class="acts"><button class="btn small primary" data-ask="${esc(id)}">Ask purchasing</button><button class="btn small" data-buyplan="${esc(id)}">Change the plan</button><button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button></div>
+      ${S.ask && S.ask.item === id ? askFormHtml(S.ask, it) : ""}
+      ${S.cc && S.cc.thread === id ? changeCardHtml() : ""}
+      ${decFormHtml(id)}</div>` : ""}
+  </div>`;
+}
+function askCalc(a) {
+  const q = parseFloat(a.qty), it = ITEMS[a.sku]; if (isNaN(q) || !it) return "";
+  return `${fmt(q)} cases = ${fmt(q * it.ea_per_case)} ${units(a.sku)}${a.by ? ` · by ${dlong(a.by)}` : ""}`;
+}
+function askFormHtml(a, it) {
+  const pos = it.lines.filter(l => l.open > 0);
+  return `<form class="ccard" id="askForm">
+    <div class="seg small">${ACTS.map(([k, n]) => `<button type="button" class="${a.action === k ? "on" : ""}" data-aact="${k}">${n}</button>`).join("")}</div>
+    <div class="row"><input type="number" min="0" step="any" data-a="qty" value="${esc(a.qty)}" placeholder="cases" style="width:90px"><span>cases</span><span>by</span><input type="date" data-a="by" value="${esc(a.by)}">
+      <select data-a="po"><option value="">${a.action === "more" || !pos.length ? "A new order" : "Any open order"}</option>${pos.map(l => `<option value="${esc(l.id)}" ${l.id === a.po ? "selected" : ""}>${esc(l.id)}, ${fmt(l.open)} open</option>`).join("")}</select></div>
+    <input type="text" data-a="reason" value="${esc(a.reason)}" placeholder="Why (purchasing reads this)">
+    <div class="row"><span class="calc">${esc(askCalc(a))}</span><span class="spacer"></span><button class="btn small primary">Save</button><button type="button" class="btn small" id="askCancel">Cancel</button></div>
+  </form>`;
+}
+const buyItem = id => desk.purchaseNews(S.date).find(i => i.id === id);
+function bindBuy() {
+  document.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => {
+    const it = buyItem(b.dataset.ask); if (!it) return;
+    S.cc = null; S.pending = null;
+    S.ask = { item: it.id, sku: it.sku, ...it.prefill, qty: Math.round(it.prefill.qty * 100) / 100, reason: it.title }; renderPage();
+  });
+  document.querySelectorAll("[data-buyplan]").forEach(b => b.onclick = () => {
+    const it = buyItem(b.dataset.buyplan); if (!it) return;
+    S.ask = null; S.pending = null;
+    S.cc = newCard({ id: it.id, kind: "purchase", region: it.change.region, title: it.title, items: [] }, { ...it.change, ref: it.id }); renderPage();
+  });
+  const f = $("askForm"); if (!f) return;
+  const a = S.ask;
+  f.querySelectorAll("[data-aact]").forEach(b => b.onclick = () => { a.action = b.dataset.aact; renderPage(); });
+  f.querySelectorAll("[data-a]").forEach(el => el.oninput = el.onchange = () => { a[el.dataset.a] = el.value; const c = f.querySelector(".calc"); if (c) c.textContent = askCalc(a); });
+  $("askCancel").onclick = () => { S.ask = null; renderPage(); };
+  f.onsubmit = e => {
+    e.preventDefault();
+    const it = buyItem(a.item), q = parseFloat(a.qty);
+    if (isNaN(q) || q <= 0) return f.querySelector('[data-a="qty"]').focus();
+    if (!a.by) return f.querySelector('[data-a="by"]').focus();
+    const o = { id: uid("o"), date: S.date, item: a.item, kind: it ? it.kind : "", action: a.action, sku: a.sku, po: a.po || "", qty: q, by: a.by, reason: (a.reason || "").trim() || (it ? it.title : ""), title: it ? it.title : a.item };
+    R.orders.push(o);
+    S.flash = { tab: "news", order: true, undo: { orders: [o.id] }, text: `Asked purchasing: ${actWord(o.action)} ${fmt(q)} cases of ${itemName(o.sku)}${o.po ? ` on ${o.po}` : ""} by ${dlabel(o.by)}.` };
+    S.ask = null; commit();
+  };
 }
 /* a sheet that arrived after the month was published: its new numbers are not in the plan until taken */
 function lateSheets(pub) {
@@ -541,6 +634,8 @@ function msgHtml(x, full) {
 }
 function bindNews() {
   toggles();
+  const fu = $("flashUndo"); if (fu) fu.onclick = () => undoFlash(S.flash.undo);
+  bindBuy();
   const late = context().late, split = v => { const i = v.indexOf("|"); return [v.slice(0, i), v.slice(i + 1)]; };
   const take = (sid, keys) => {
     const x = late.find(x => x.sheet.id === sid);
@@ -562,7 +657,7 @@ function bindNews() {
   });
   bindChangeCard();
   document.querySelectorAll("[data-aidraft]").forEach(b => b.onclick = () => aiDraft(b.dataset.aidraft));
-  document.querySelectorAll("[data-decide]").forEach(b => b.onclick = () => { const [target, outcome] = b.dataset.decide.split("|"); S.pending = { target, outcome }; renderPage(); setTimeout(() => $("decNote") && $("decNote").focus()); });
+  document.querySelectorAll("[data-decide]").forEach(b => b.onclick = () => { const v = b.dataset.decide, i = v.lastIndexOf("|"), target = v.slice(0, i), outcome = v.slice(i + 1); S.pending = { target, outcome }; S.ask = null; S.cc = null; renderPage(); setTimeout(() => $("decNote") && $("decNote").focus()); });
   document.querySelectorAll("[data-rmthread]").forEach(b => b.onclick = () => {
     const th = desk.threadsAt(S.date).find(t => t.id === b.dataset.rmthread); if (!th) return;
     for (const x of th.items) R.removed.push({ id: uid("rm"), date: S.date, input: x.id, label: `${th.kind === "calendar" ? "Calendar" : "Message"}: ${th.title}${th.items.length > 1 ? ` (${dlabel(x.date)})` : ""}` });
@@ -572,7 +667,8 @@ function bindNews() {
   if (df) {
     df.onsubmit = e => {
       e.preventDefault(); const note = $("decNote").value.trim();
-      S.flash = { tab: "news", text: `${threadTitle(S.pending.target)}: ${S.pending.outcome === "waiting" ? "waiting on someone" : "no change needed"}.` + decideThread(S.pending.target, S.pending.outcome, note) };
+      const dt = decideThread(S.pending.target, S.pending.outcome, note);
+      S.flash = { tab: "news", undo: { decisions: dt.ids }, text: `${threadTitle(S.pending.target)}: ${S.pending.outcome === "waiting" ? "waiting on someone" : "no change needed"}.` + dt.text };
       S.pending = null; commit();
     };
     $("decCancel").onclick = () => { S.pending = null; renderPage(); };
@@ -614,7 +710,7 @@ function changeCardHtml(c = S.cc, idx = null) {
   </form>`;
 }
 function bindChangeCard() {
-  document.querySelectorAll("form.ccard").forEach(f => {
+  document.querySelectorAll("form.ccard[data-card]").forEach(f => {
     const idx = f.dataset.card, get = () => idx === "" ? S.cc : S.aiDrafts[+idx];
     f.querySelectorAll("[data-ctype]").forEach(b => b.onclick = () => { const c = get(); c.type = b.dataset.ctype; if (c.type === "move" && !c.to) { const ms = desk.planAt(S.date).months; c.to = ms[ms.indexOf(c.month) + 1] || ms[0]; c.unit = "CS"; } renderPage(); });
     f.querySelectorAll("[data-f]").forEach(el => el.oninput = el.onchange = () => { const c = get(); c[el.dataset.f] = el.value; const calc = f.querySelector(".calc"); if (calc) calc.textContent = cardCalc(c); if (el.tagName === "SELECT" && el.dataset.f !== "region") renderPage(); });
@@ -626,8 +722,10 @@ function bindChangeCard() {
       if (moveAll(c)) c.qty = cur;
       if (isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
       const calcText = cardCalc(c);
-      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: `${c.region}|${c.sku}|${c.month}`, qty: +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
-      S.flash = { tab: "news", change: true, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + decideThread(c.thread, "changed", c.reason, c.ref, c.month) };
+      const cid = uid("c");
+      R.changes.push({ id: cid, date: S.date, type: c.type, ref: c.ref, key: `${c.region}|${c.sku}|${c.month}`, qty: +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
+      const dt = decideThread(c.thread, "changed", c.reason, c.ref, c.month);
+      S.flash = { tab: "news", change: true, undo: { changes: [cid], decisions: dt.ids }, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + dt.text };
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
       commit();
     };
@@ -652,7 +750,7 @@ function guessSku(th) {
   const code = D.items.find(i => new RegExp("\\b" + i.sku + "\\b").test(t));
   return code ? code.sku : (D.items.find(i => t.toLowerCase().includes(i.name.toLowerCase().replace(/ \/.*$/, ""))) || {}).sku || null;
 }
-function threadTitle(id) { const t = desk.threadsAt(S.date).find(x => x.id === id); return t ? t.title : id; }
+function threadTitle(id) { const t = desk.threadsAt(S.date).find(x => x.id === id); if (t) return t.title; const b = buyItem(id); return b ? b.title : id; }
 function guessMonth(th) {
   const t = th.items.map(x => x.kind === "email" ? x.mail.subject + " " + x.mail.body : x.event.detail).join(" ");
   const plan = desk.planAt(S.date); if (!plan) return null;
@@ -666,15 +764,22 @@ function pageSend(X) {
     $("page").innerHTML = head("Send to purchasing", `Purchasing gets the ${X.month} plan once it is published. It is not published yet.`);
     foot({ back, main: { label: `Go to publish`, act: () => go("publish") } }); return;
   }
-  const rl = desk.releaseList(S.date), rows = rl.rows, net = rows.reduce((t, x) => t + x.d, 0);
+  const rl = desk.releaseList(S.date), rows = rl.rows, net = rows.reduce((t, x) => t + x.d, 0), oa = desk.ordersAt(S.date), ofile = `order-actions-for-purchasing-${S.date}.csv`;
   const keyOf = x => `${D.regions.find(r => r.name === x.region).code}|${x.sku}|${x.month}`;
   const file = `${X.month.toLowerCase()}-plan-for-purchasing-${S.date}.csv`, span = `${mlabel(rl.months[0])} to ${mlabel(rl.months[rl.months.length - 1])}`;
   $("page").innerHTML = `
     ${head("Send to purchasing", `Purchasing gets the ${esc(rl.base.name)} as it stands today: all ${fmt(rl.count)} lines, ${span}, in cases. Lines you changed since publishing on ${dlabel(rl.base.date)} show the published number, the change and why.`)}
     <p class="sum">${rows.length ? `<b>${plural(rows.length, "line")} changed since publishing</b>, ${sign(Math.round(net))} cases in all.` : "<b>No changes since publishing.</b> The file matches the published plan."}</p>
     ${rows.length ? `<table class="plain review"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Published</th><th class="n">Now</th><th class="n">Change</th><th>Why</th><th>How</th></tr>
-      ${rows.map(x => `<tr><td>${esc(x.region)}</td><td><a data-goto="plan:${keyOf(x)}">${esc(x.item)}</a></td><td>${mlabel(x.month)}</td><td class="n">${fmt(x.released)}</td><td class="n"><b>${fmt(x.proposed)}</b></td><td class="n ${x.d > 0 ? "up" : "down"}">${sign(x.d)}</td><td class="why" title="${esc(x.reason)}">${esc(x.reason)}</td><td class="hint">${esc(x.how)}</td></tr>`).join("")}</table>` : ""}`;
-  foot({ back, note: S.sent === S.date ? `Saved ${file} to your downloads folder. Send it to purchasing.` : X.news.count ? `${plural(X.news.count, "item")} in Late news still open, not in this plan` : "", main: { label: "Download the plan for purchasing", act: () => { download(file, rl.csv, "text/csv"); S.sent = S.date; renderPage(); } } });
+      ${rows.map(x => `<tr><td>${esc(x.region)}</td><td><a data-goto="plan:${keyOf(x)}">${esc(x.item)}</a></td><td>${mlabel(x.month)}</td><td class="n">${fmt(x.released)}</td><td class="n"><b>${fmt(x.proposed)}</b></td><td class="n ${x.d > 0 ? "up" : "down"}">${sign(x.d)}</td><td class="why" title="${esc(x.reason)}">${esc(x.reason)}</td><td class="hint">${esc(x.how)}</td></tr>`).join("")}</table>` : ""}
+    <h2>Order actions</h2>
+    ${oa.rows.length ? `<p class="sum"><b>${plural(oa.rows.length, "order action")}</b> you asked for under Late news. They go to purchasing as a second file, ${esc(ofile)}.</p>
+      <table class="plain review"><tr><th>Asked</th><th>Action</th><th>Item</th><th>Order</th><th class="n">Cases</th><th>By</th><th>Why</th></tr>
+      ${oa.rows.map(o => `<tr><td>${dlabel(o.date)}</td><td><b>${esc(o.actionText)}</b></td><td>${esc(itemName(o.sku))}</td><td>${esc(o.po || "new order")}</td><td class="n">${fmt(o.qty)}</td><td>${dlabel(o.by)}</td><td class="why" title="${esc(o.reason)}">${esc(o.reason)}</td></tr>`).join("")}</table>
+      <div class="acts"><button class="btn" id="dlOrders">Download the order actions</button>${S.sentOrders === S.date ? ` <span class="hint">Saved ${esc(ofile)} to your downloads folder.</span>` : ""}</div>`
+    : `<p class="hint">No order actions. Ask purchasing from a Late news item to order more, cut an order or rush one.</p>`}`;
+  if ($("dlOrders")) $("dlOrders").onclick = () => { download(ofile, oa.csv, "text/csv"); S.sentOrders = S.date; renderPage(); };
+  foot({ back, note: S.sent === S.date ? `Saved ${file} to your downloads folder. Send it to purchasing${oa.rows.length ? ", with the order actions" : ""}.` : X.news.count ? `${plural(X.news.count, "item")} in Late news still open, not in this plan` : "", main: { label: "Download the plan for purchasing", act: () => { download(file, rl.csv, "text/csv"); S.sent = S.date; renderPage(); } } });
 }
 
 /* ================================================================ Add by hand: paste, drop, file, folder */
@@ -850,6 +955,11 @@ function logEntries(T) {
     const what = `${{ add: "added to", set: "set", move: "moved" }[c.type]} ${esc(regName(r))} · ${esc(itemName(sku))} · ${mlabel(m)}${c.type === "move" ? " → " + mlabel(c.to) : ""}: ${fmt(c.qty)} ${unitWord(sku, c.unit)}`;
     out.push({ date: c.date, kind: "you", text: `You ${what}.${c.source ? ` From: ${esc(srcName(c.source))}.` : ""}${c.key ? ` <a data-goto="plan:${c.key}">Open</a>` : ""}`, why: c.reason });
     if (c.removed_on && c.removed_on <= T) out.push({ date: c.removed_on, kind: "you", text: `You undid a ${dlabel(c.date)} change (${esc(c.reason)}).` });
+  }
+  for (const it of desk.purchaseNews(T).filter(i => i.kind === "short" || i.kind === "request")) out.push({ date: it.date, kind: "msg", text: `Purchasing: <b>${esc(it.title)}</b>`, why: [it.source, it.quote].filter(Boolean).join(" · ") });
+  for (const o of (R.orders || []).filter(o => o.date <= T)) {
+    out.push({ date: o.date, kind: "you", text: `You asked purchasing to ${actWord(o.action)} <b>${fmt(o.qty)} cases</b> of ${esc(itemName(o.sku))}${o.po ? ` on ${esc(o.po)}` : ""} by ${dlabel(o.by)}. From: ${esc(o.title)}.`, why: o.reason !== o.title ? o.reason : "" });
+    if (o.removed_on && o.removed_on <= T) out.push({ date: o.removed_on, kind: "you", text: `You took back a ${dlabel(o.date)} ask of purchasing (${actWord(o.action)} ${fmt(o.qty)} cases of ${esc(itemName(o.sku))}).` });
   }
   for (const e of (R.reportEdits || []).filter(e => e.date <= T)) {
     const [r, sku, m] = e.key.split("|");
@@ -1063,6 +1173,7 @@ function workedExample() {
   ch("2026-09-17", "set", "GC-PROMO-01", "R06|S014|2026-10", 480, "EA", "Promo cut to 480 bottles", mango);
   for (const [date, target] of [["2026-09-16", "cal:OP-FR-02"], ["2026-09-16", kit], ["2026-09-17", "cal:GC-PROMO-01"], ["2026-09-17", mango]]) rec.decisions.push({ id: uid("d"), date, target, outcome: "no-change", note: "Logged as a change" });
   rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter trial: no sites or quantities yet" });
+  for (const it of C.Desk(D, rec).purchaseNews("2026-09-18")) if (it.open && it.kind !== "request") rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: it.id, outcome: "no-change", note: "Handled in September" });
   const done = new Set(rec.decisions.map(d => d.target));
   for (const t of C.Desk(D, rec).threadsAt("2026-09-18")) if (!done.has(t.id)) rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: t.id, outcome: "no-change", note: "Handled in September" });
   return rec;

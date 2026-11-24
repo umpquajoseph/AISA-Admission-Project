@@ -305,7 +305,88 @@ def emails():
         w.writerows(CALENDAR)
 
 
+# ---------------------------------------------------------------- purchasing, Sep 21 - Oct 14
+# Made-up rows in the packet's own export columns (Purchasing/Exports), plus a "synthetic" column.
+# They pick up after the Sep 18 snapshot: the September lines still open are received on their
+# due dates, and a few new orders for October and November go in, with one supplier cut and one
+# late truck. The page turns cuts and slips into Short items under Late news on their dates.
+P_MARK = "made up for rehearsal"
+P_LINES = [  # po, line, supplier code, supplier, entered, item, description, cases, due
+    ("PO-6066", "10000", "OTR", "Oat & Trestle Supply", "2026-09-24", "S017", "Shelf-stable oat drink", 120, "2026-10-14"),
+    ("PO-6066", "20000", "OTR", "Oat & Trestle Supply", "2026-09-24", "S018", "Shelf-stable almond drink", 60, "2026-10-14"),
+    ("PO-6069", "10000", "MFP", "Morrow Flavor Partners", "2026-09-28", "S005", "Vanilla syrup", 96, "2026-10-20"),
+    ("PO-6069", "20000", "MFP", "Morrow Flavor Partners", "2026-09-28", "S006", "Caramel syrup", 64, "2026-10-20"),
+    ("PO-6072", "10000", "FBV", "Fallow Beverage Works", "2026-10-01", "S016", "Spiced pear fruit base", 36, "2026-11-02"),
+    ("PO-6072", "20000", "FBV", "Fallow Beverage Works", "2026-10-01", "S021", "Lemonade concentrate", 60, "2026-11-02"),
+]
+P_RECEIPTS = [  # receipt, line, posted, supplier, po, po line, item, cases, slip
+    # the September lines open on Sep 18, received in full on their due dates
+    ("GR-1204", "10000", "2026-09-21 08:10", "MFP", "PO-6046", "10000", "S006", 64, "MF-5650"),
+    ("GR-1204", "20000", "2026-09-21 08:10", "MFP", "PO-6046", "20000", "S008", 36, "MF-5650"),
+    ("GR-1206", "10000", "2026-09-22 07:52", "OTR", "PO-6042", "10000", "S017", 36, "OT-3131"),
+    ("GR-1207", "10000", "2026-09-22 10:05", "FBV", "PO-6049", "10000", "S011", 42, "FB-2170"),
+    ("GR-1207", "20000", "2026-09-22 10:05", "FBV", "PO-6049", "20000", "S021", 30, "FB-2170"),
+    ("GR-1209", "10000", "2026-09-23 07:40", "BGC", "PO-6050", "10000", "S001", 168, "BG-923-1"),
+    ("GR-1210", "10000", "2026-09-23 09:31", "FBV", "PO-6035", "20000", "S013", 18, "FB-2181"),
+    ("GR-1211", "10000", "2026-09-23 13:12", "VCW", "PO-6041", "10000", "S022", 36, "VC-6041-R2"),
+    ("GR-1213", "10000", "2026-09-24 08:44", "VCW", "PO-6053", "10000", "S024", 44, "VC-6053"),
+    ("GR-1215", "10000", "2026-09-25 07:58", "MFP", "PO-6055", "10000", "S019", 48, "MF-5677"),
+    ("GR-1216", "10000", "2026-09-25 11:20", "OTR", "PO-6058", "10000", "S017", 120, "OT-3150"),
+    ("GR-1216", "20000", "2026-09-25 11:20", "OTR", "PO-6058", "20000", "S018", 60, "OT-3150"),
+    ("GR-1219", "10000", "2026-09-28 09:03", "FBV", "PO-6061", "10000", "S015", 30, "FB-2196"),
+    ("GR-1219", "20000", "2026-09-28 09:03", "FBV", "PO-6061", "20000", "S016", 36, "FB-2196"),
+    ("GR-1222", "10000", "2026-09-30 08:15", "VCW", "PO-6063", "10000", "S022", 210, "VC-6063"),
+    ("GR-1222", "20000", "2026-09-30 08:15", "VCW", "PO-6063", "20000", "S023", 210, "VC-6063"),
+    # October: the oat truck arrives part full
+    ("GR-1241", "10000", "2026-10-14 08:02", "OTR", "PO-6066", "10000", "S017", 72, "OT-3190"),
+    ("GR-1241", "20000", "2026-10-14 08:02", "OTR", "PO-6066", "20000", "S018", 60, "OT-3190"),
+]
+P_CHANGES = [  # change, entered, po, line, type, old, new, evidence, comment
+    ("CH-101", "2026-10-13 09:12", "PO-6069", "10000", "Cancel balance", "96 CS", "60 CS", "MF-5711",
+     "Supplier allocating vanilla this run: 60 of 96 confirmed. Buyer closed the 36-case balance."),
+    ("CH-103", "2026-10-14 15:40", "PO-6066", "10000", "Balance ETA", "10/14", "10/21", "OT-3190",
+     "Plant line down. 72 arrived; the 48-case balance is on next week's truck."),
+]
+
+
+def purchasing():
+    d = OUT / "purchasing"
+    d.mkdir(exist_ok=True)
+    received = {}
+    for r in P_RECEIPTS:
+        received[(r[4], r[5])] = received.get((r[4], r[5]), 0) + r[7]
+    cancelled = {(c[2], c[3]): int(c[5].split()[0]) - int(c[6].split()[0]) for c in P_CHANGES if c[4] == "Cancel balance"}
+    due = {(c[2], c[3]): f"2026-{c[6].replace('/', '-')}" for c in P_CHANGES if c[4] == "Balance ETA"}
+    with open(d / "PO_line_status_oct.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["po_number", "po_line", "supplier_code", "supplier_name", "entered_on", "delivery_location", "allocation",
+                    "item_no", "description", "purchase_uom", "original_order_qty", "cancelled_qty", "posted_received_qty",
+                    "open_qty", "initial_due_date", "current_due_date", "line_status", "synthetic"])
+        for po, ln, sc, sn, ent, sku, desc, q, dd in P_LINES:   # state as of Oct 16, the last made-up day
+            c, rc = cancelled.get((po, ln), 0), received.get((po, ln), 0)
+            op = q - c - rc
+            w.writerow([po, ln, sc, sn, ent, "CI-01", "Pooled", sku, desc, "CS", q, c, rc, op, dd, due.get((po, ln), dd),
+                        "Closed" if op == 0 else "Part received" if rc else "Released", P_MARK])
+    with open(d / "Receipt_journal_oct.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["receipt_no", "receipt_line", "posted_local", "receiving_location", "supplier_code", "po_number",
+                    "po_line", "item_no", "posted_qty", "uom", "packing_slip", "synthetic"])
+        for no, rl, at, sc, po, ln, sku, q, slip in P_RECEIPTS:
+            w.writerow([no, rl, at, "CI-01", sc, po, ln, sku, q, "CS", slip, P_MARK])
+    with open(d / "Buyer_change_journal_oct.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["change_no", "entered_local", "po_number", "po_line", "change_type", "old_value", "new_value",
+                    "evidence_ref", "buyer_comment", "synthetic"])
+        for row in P_CHANGES:
+            w.writerow([*row, P_MARK])
+    return 3
+
+
 def main():
+    if sys.argv[1:] == ["purchasing"]:      # only the purchasing files; leaves the sheets and emails as they are
+        print(f"wrote {purchasing()} purchasing files to {OUT / 'purchasing'}")
+        return
+    purchasing()
     ref = september_cells()
     oct_cs, same = plan_october(ref)
     made = sheets(ref, oct_cs, same)

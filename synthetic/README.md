@@ -29,3 +29,17 @@ Rebuild: `python -I pipeline/make_synthetic.py`, then `python -I pipeline/build_
 `calendar.csv` adds event-calendar rows in the packet's columns. MW-OPEN-03 names
 a Mesa West opening kit, so those November lines pass with "opening kit +24".
 `manifest.csv` gives each sheet's arrival date.
+
+`purchasing/` adds made-up rows in the packet's own `Purchasing/Exports` columns,
+each marked in a `synthetic` column. Rebuild just these with
+`python -I pipeline/make_synthetic.py purchasing`.
+
+| Date | Row | What Late news shows |
+|---|---|---|
+| Sep 21-30 | Receipts for the September lines still open on Sep 18 | Nothing: those orders arrive in full |
+| Sep 24-Oct 1 | New orders PO-6066, PO-6069, PO-6072 for October and November | The orders behind later items |
+| Oct 13 | CH-101: vanilla order cut from 96 to 60 cases | Short |
+| Oct 14 | CH-103: 48 cases of oat drink slip from Oct 14 to Oct 21 | Short |
+
+Too much and Too late are not rows: they come from the planner's own changes
+against these open orders (lemonade moved out of November; spiced pear added).

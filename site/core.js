@@ -233,7 +233,7 @@
    *   versions  plans published here; each becomes the plan in force from its date */
   function Desk(D, record) {
     const ref = D;
-    record = Object.assign({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [] }, record || {});
+    record = Object.assign({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] }, record || {});
     const OPT = Object.assign({ tol: 0.35, min: 30, swingTol: 0.15, swingMin: 10 }, record.options || {});
     const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
     const regionName = c => (D.regions.find(r => r.code === c) || {}).name || c;
@@ -793,6 +793,173 @@
       return { base: w.base && { id: w.base.id, name: w.base.name, date: w.base.date }, rows, count, months: w.months, superseded: w.superseded, csv: lines.join("\n") + "\n" };
     }
 
+    /* ---------------------------------------------------------------- purchasing */
+    /* The buyer's watch list (Purchasing/Exports, Sep 18) and the made-up October rows. Orders are
+     * pooled at Central Intake, so they are compared with the plan for all regions together. The
+     * list is a slice of one buyer's desk: no stock on hand, not every order. Each line's state on a
+     * date comes from the journal and receipt dates; on Sep 18 it matches the export's own columns.
+     * record.orders: { id, date, item (a purchasing item id), kind, action more|cut|rush, sku, po,
+     *   qty (cases), by (date), reason, title, removed_on } — the planner's asks of purchasing. */
+    const PU0 = D.purchasing || {}, PU1 = SY.purchasing || {};
+    const both = k => [...(PU0[k] || []).map(x => ({ ...x, synthetic: false })), ...(PU1[k] || []).map(x => ({ ...x, synthetic: true }))];
+    const PO = { lines: both("lines"), journal: both("journal"), receipts: both("receipts"), reqs: both("requisitions") };
+    const addD = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+    const mLong = m => MONTHS_LONG[+m.slice(5) - 1].replace(/^./, c => c.toUpperCase());
+    const dl = d => d ? `${mShort(d.slice(0, 7))} ${+d.slice(8, 10)}` : "";
+    const poId = l => `${l.po}/${l.line}`;
+    const csOf = v => parseFloat(String(v || "").replace(/,/g, "")) || 0;
+    const etaOf = (v, near) => { const m = String(v || "").match(/(\d{1,2})\/(\d{1,2})/); return m ? `${near.slice(0, 4)}-${pad(+m[1])}-${pad(+m[2])}` : null; };
+    const poCache = {};
+    /* every PO line entered by T, as it stood on T */
+    function poAt(T) {
+      if (poCache[T]) return poCache[T];
+      const out = [];
+      for (const l of PO.lines) {
+        if (l.entered > T) continue;
+        const k = poId(l), js = PO.journal.filter(j => `${j.po}/${j.line}` === k && j.at.slice(0, 10) <= T).sort((a, b) => a.at.localeCompare(b.at));
+        let cancelled = 0, due = l.due0, voided = false;
+        for (const j of js) {
+          if (j.type === "Cancel balance") cancelled = l.qty - csOf(j.new);
+          else if (j.type === "Void line") { cancelled = l.qty; voided = true; due = null; }
+          else if (j.type === "Balance ETA") due = etaOf(j.new, l.due0) || due;
+        }
+        const rc = PO.receipts.filter(r => `${r.po}/${r.line}` === k && r.at.slice(0, 10) <= T);
+        const received = rc.reduce((a, r) => a + r.qty, 0), open = Math.max(0, l.qty - cancelled - received);
+        out.push({ ...l, id: k, cancelled, received, open, due, month: l.due0.slice(0, 7), status: voided ? "Void" : open === 0 ? "Closed" : received ? "Part received" : "Released", receipts: rc, changes: js });
+      }
+      return (poCache[T] = out);
+    }
+    const netPlan = (grid, sku, m) => { let t = 0, any = false; for (const r of D.regions) { const v = (grid[r.code + "|" + sku] || {})[m]; if (v != null) { t += v; any = true; } } return any ? Math.round(t * 1000) / 1000 : null; };
+    const askedOf = (id, T) => (record.orders || []).filter(o => o.item === id && o.date <= T && !(o.removed_on && o.removed_on <= T));
+    /* the latest thing the planner did about an item: a decision, an ask of purchasing, or a change logged from it */
+    function handledAt(id, T) {
+      return [...record.decisions.filter(d => d.target === id && d.date <= T).map(d => d.date), ...askedOf(id, T).map(o => o.date),
+        ...(record.changes || []).filter(c => c.source === id && chLive(c, T)).map(c => c.date)].sort().pop() || null;
+    }
+    /* the region with the biggest plan line for an item and month: where a network change most likely lands */
+    const mainRegion = (grid, sku, m) => D.regions.map(r => [r.code, (grid[r.code + "|" + sku] || {})[m] || 0]).sort((a, b) => b[1] - a[1])[0][0];
+    const newsCache = {};
+    /* purchasing items for Late news as of T, open and settled:
+     *   short   a journal entry: the supplier cut an order, a balance slipped, a line was voided and reissued
+     *   much    the plan for an item and month went down after an open order for it was placed
+     *   late    a change since publishing adds cases and the order-by date (need date − lead days) is near or past
+     *   request a requisition awaiting planner review */
+    function purchaseNews(T) {
+      if (newsCache[T]) return newsCache[T];
+      const lines = poAt(T), w = working(T), months = w.months || [], items = [];
+      const planNow = (sku, m) => months.includes(m) ? netPlan(w.grid, sku, m) : null;
+      const name = sku => ITEMS[sku] ? ITEMS[sku].name : sku;
+      const lead = sku => (ITEMS[sku] || {}).lead_days || 0;
+      const planText = (sku, m) => { const v = planNow(sku, m); return v == null ? `${mLong(m)} is not in the plan in force` : `Plan for ${mLong(m)}, all regions: ${fmt(v)} cases`; };
+      const changeInit = (sku, m, extra) => ({ type: "add", sku, month: months.includes(m) ? m : months[0], region: w.base ? mainRegion(w.grid, sku, months.includes(m) ? m : months[0]) : D.regions[0].code, qty: "", unit: "CS", ...extra });
+      // 1. journal entries
+      for (const j of PO.journal.filter(j => j.at.slice(0, 10) <= T)) {
+        const day = j.at.slice(0, 10), l = lines.find(x => x.id === `${j.po}/${j.line}`); if (!l) continue;
+        const base = { id: "po:" + j.no, kind: "short", date: day, sku: l.sku, month: l.month, region: null, synthetic: !!j.synthetic, quote: j.comment, source: `${j.no} · ${l.supplier} · ${j.po}/${j.line}` };
+        if (j.type === "Cancel balance") {
+          const kept = csOf(j.new), cut = csOf(j.old) - kept;
+          items.push({ ...base, lines: [l], need: cut, title: `${name(l.sku)}: ${l.received >= kept ? "supplier sent" : "order cut to"} ${fmt(kept)} of ${fmt(csOf(j.old))} cases`,
+            text: `${fmt(cut)} cases short on ${j.po}/${j.line}, ordered for ${dl(l.due0)}.`,
+            prefill: { action: "more", qty: cut, by: [l.due0, addD(T, lead(l.sku))].sort().pop(), po: "" }, change: changeInit(l.sku, l.month, { qty: -cut }) });
+        } else if (j.type === "Balance ETA") {
+          const was = etaOf(j.old, l.due0), now = etaOf(j.new, l.due0), then = poAt(day).find(x => x.id === l.id), open = then ? then.open : l.open;
+          const slip = was && now ? Math.round((new Date(now) - new Date(was)) / 864e5) : null;
+          items.push({ ...base, lines: [l], need: open, title: `${name(l.sku)}: ${fmt(open)} cases now due ${dl(now)}, not ${dl(was)}`,
+            text: `The balance on ${j.po}/${j.line} arrives ${slip != null ? `${slip} day${slip === 1 ? "" : "s"} ` : ""}later than planned.`,
+            done: l.open === 0 ? "received" : null, prefill: { action: "rush", qty: open, by: [was, addD(T, 2)].sort().pop(), po: l.id }, change: changeInit(l.sku, l.month) });
+        } else if (j.type === "Void line") {
+          const re = (j.comment.match(/PO-\d+\/\d+/) || [])[0], rl = re && lines.find(x => x.id === re);
+          const rj = rl && PO.journal.find(x => x.type === "Replacement issued" && `${x.po}/${x.line}` === re && x.at.slice(0, 10) <= T);
+          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `${j.no} and ${rj.no} · ${l.supplier}`,
+            title: `${name(l.sku)}: ${fmt(rl.qty)} cases reissued on ${rl.po}, due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `${j.po}/${j.line} was voided and reissued on ${re}.`,
+            done: rl.open === 0 ? "received" : null, prefill: { action: "rush", qty: rl.qty, by: [l.due0, addD(T, 2)].sort().pop(), po: rl.id }, change: changeInit(l.sku, l.month) });
+          else items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases voided`, text: `${j.po}/${j.line} was voided with no replacement on the list.`,
+            prefill: { action: "more", qty: l.qty, by: [l.due0, addD(T, lead(l.sku))].sort().pop(), po: "" }, change: changeInit(l.sku, l.month) });
+        }
+      }
+      // 2. the plan moved after orders were placed: changes since publishing, and Check decisions on the published version
+      if (w.base) {
+        const agg = {};
+        const slot = (sku, m) => agg[sku + "|" + m] = agg[sku + "|" + m] || { sku, month: m, d: 0, date: "", parts: [], check: 0, checkParts: [] };
+        for (const x of w.diff) {
+          const a = slot(x.sku, x.month), dt = x.changes.map(c => c.date).sort().pop();
+          a.d += x.d; if (dt > a.date) a.date = dt;
+          a.parts.push({ region: x.region, d: x.d, date: dt, text: x.text, reason: x.reason });
+        }
+        if (w.base.role === "published" && w.base.cycle) {
+          const dr = draft(w.base.date, w.base.cycle);
+          for (const l of (dr ? dr.lines : [])) if (l.sku && l.decision && l.last != null && l.value != null && l.value < l.last - 1e-9 && months.includes(l.month)) {
+            const a = slot(l.sku, l.month); a.check += l.last - l.value; a.checkParts.push({ region: l.region, last: l.last, value: l.value });
+          }
+        }
+        const cal = inputsAt(T).filter(x => x.kind === "calendar");
+        for (const a of Object.values(agg)) {
+          const pos = lines.filter(l => l.sku === a.sku && l.month === a.month && l.open > 0);
+          const before = pos.filter(l => l.entered <= w.base.date), check = before.length ? a.check : 0;
+          const net = Math.round((a.d - check) * 1000) / 1000;
+          const dates = [a.d < 0 ? a.date : "", check ? w.base.date : ""].filter(Boolean).sort();
+          if (net <= -1 && pos.length) {
+            const used = pos.filter(l => l.entered <= (dates[dates.length - 1] || T)), open = used.reduce((t, l) => t + l.open, 0);
+            // cases the supplier or buyer already cut from these orders count against the drop
+            const cut0 = used.reduce((t, l) => t + l.cancelled, 0), excess = Math.min(open, -net - cut0); if (excess < 1 || !used.length) continue;
+            const id = "much:" + a.sku + "@" + a.month, cut = askedOf(id, T).filter(o => o.action === "cut").reduce((t, o) => t + o.qty, 0);
+            const was = netPlan(working(used[0].entered).grid, a.sku, a.month);
+            const how = [...a.parts.filter(p => p.d < 0).map(p => `${regionName(p.region)}: ${p.text}${p.reason ? ` (${p.reason})` : ""}`), ...(check ? a.checkParts.map(p => `${regionName(p.region)}: set to ${fmt(p.value)} under Check, was ${fmt(p.last)}`) : [])];
+            const big = used.slice().sort((x, y) => y.open - x.open)[0];
+            items.push({ id, kind: "much", date: dates[dates.length - 1] || w.base.date, sku: a.sku, month: a.month, region: null, lines: used, need: excess, synthetic: used.some(l => l.synthetic),
+              title: `${name(a.sku)}: ${fmt(open)} cases on order, but you lowered ${mLong(a.month)}. ${fmt(excess)} more than the plan needs`,
+              text: how.join(" · "), source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now${was != null ? `, ${fmt(was)} when ${big.po} was placed` : ""}`,
+              prefill: { action: "cut", qty: Math.max(0, excess - cut), by: big.due || big.due0, po: big.id }, change: changeInit(a.sku, a.month) });
+          } else if (net >= 1 && a.d > 0) {
+            // need date: a calendar event for the same region and month that arrived within three days of
+            // the change (the rule Late news uses to close a calendar entry with a change); else the 1st
+            const near = (x, d) => Math.abs(new Date(x) - new Date(d)) <= 3 * 864e5;
+            const needs = a.parts.filter(p => p.d > 0).map(p => (cal.filter(x => x.region === p.region && (x.event.event_date || "").slice(0, 7) === a.month && near(x.date, p.date) && !/cancel|withdrawn|dropped/i.test(x.event.status || "")).map(x => x.event.event_date).sort()[0]) || a.month + "-01");
+            const need = needs.sort()[0], by = addD(need, -lead(a.sku));
+            if (by > addD(a.date, 14) || need < T) continue;
+            const id = "late:" + a.sku + "@" + a.month, more = askedOf(id, T).filter(o => o.action !== "cut").reduce((t, o) => t + o.qty, 0);
+            const reg = a.parts.filter(p => p.d > 0).sort((x, y) => y.d - x.d)[0].region;
+            items.push({ id, kind: "late", date: a.date, sku: a.sku, month: a.month, region: reg, lines: lines.filter(l => l.sku === a.sku && l.open > 0), need: net, synthetic: false, orderBy: by,
+              title: `${name(a.sku)} +${fmt(net)} cases for ${dl(need)}: ${by < T ? `order-by date ${dl(by)} has passed` : `order by ${dl(by)} to arrive in time`}`,
+              text: `${a.parts.filter(p => p.d > 0).map(p => `${regionName(p.region)}: ${p.text}${p.reason ? ` (${p.reason})` : ""}`).join(" · ")}. ${name(a.sku)} takes ${lead(a.sku)} days to arrive${by < T ? `; ordered today it arrives ${dl(addD(T, lead(a.sku)))}` : ""}.`,
+              source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now, ${fmt(netPlan(w.base.grid, a.sku, a.month))} as published`,
+              // already asked for more than the plan now adds: offer to cut the difference
+              prefill: net - more < 0 ? { action: "cut", qty: more - net, by: need, po: "" } : { action: by < T ? "rush" : "more", qty: net - more, by: need, po: "" }, change: changeInit(a.sku, a.month, { region: reg }) });
+          }
+        }
+      }
+      // 3. requisitions waiting on the planner
+      for (const q of PO.reqs.filter(q => q.at.slice(0, 10) <= T && /awaiting planner/i.test(q.state) && ITEMS[q.item] && q.need)) {
+        const m = q.need.slice(0, 7), unit = String(q.uom || "").toLowerCase(), ea = unit && unit !== "cs" && unit !== "case";
+        const cs = ea ? q.qty / epc(q.by, q.item) : q.qty, by = addD(q.need, -lead(q.item));
+        const key = `${q.by}|${q.item}|${m}`, inPlan = (w.grid[q.by + "|" + q.item] || {})[m], ch = w.applied[key] || [];
+        items.push({ id: "rq:" + q.id, kind: "request", date: q.at.slice(0, 10), sku: q.item, month: m, region: q.by, synthetic: !!q.synthetic, need: cs, orderBy: by,
+          lines: lines.filter(l => l.sku === q.item && l.open > 0), quote: q.note, source: `Requisition ${q.id} · ${q.scope} · buyer link: ${q.po || "none yet"}`,
+          title: `${regionName(q.by)}: ${fmt(q.qty)} ${ea ? unit + "s" : "cases"} of ${name(q.item)} for ${dl(q.need)}`,
+          text: `${ea ? `${fmt(q.qty)} ${unit}s ÷ ${epc(q.by, q.item)} = ${fmt(cs)} cases. ` : ""}In the plan for ${regionName(q.by)}, ${mLong(m)}: ${inPlan == null ? "no line" : `${fmt(inPlan)} cases`}${ch.length ? `, including ${ch.map(c => `${c.ref || "a change"}, ${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} cases, logged ${dl(c.date)}`).join("; ")}` : ""}. Order-by date ${dl(by)}${by < T ? " has passed" : ""}.`,
+          prefill: { action: by < T ? "rush" : "more", qty: cs, by: q.need, po: "" }, change: { type: "add", region: q.by, sku: q.item, month: months.includes(m) ? m : months[0], qty: ea ? q.qty : cs, unit: ea ? "EA" : "CS", reason: `${q.id}: ${q.scope}` } });
+      }
+      for (const it of items) {
+        it.planText = planText(it.sku, it.month);
+        it.asked = askedOf(it.id, T);
+        it.handled = handledAt(it.id, T);
+        // a late balance that has since been received needs nothing more
+        it.open = !it.done && (!it.handled || it.handled < it.date);
+        it.change.reason = it.change.reason || it.title;
+      }
+      items.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+      return (newsCache[T] = items);
+    }
+    /* what purchasing is asked to do, as of T: every live ask whose date to act by has not passed */
+    function ordersAt(T) {
+      const ACT = { more: "Order more", cut: "Cut the order", rush: "Rush" };
+      const rows = (record.orders || []).filter(o => o.date <= T && !(o.removed_on && o.removed_on <= T) && (o.by || "") >= T).sort((a, b) => a.date.localeCompare(b.date) || a.sku.localeCompare(b.sku));
+      const esc = v => /[",\n]/.test(String(v == null ? "" : v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v == null ? "" : v);
+      const csv = [["Asked on", "Action", "SKU", "Item", "PO line", "Cases", "Needed by", "Why", "Late news item"].join(","),
+        ...rows.map(o => [o.date, ACT[o.action], o.sku, ITEMS[o.sku].name, o.po || "new order", Math.round(o.qty * 100) / 100, o.by, o.reason, o.title === o.reason ? "" : o.title].map(esc).join(","))];
+      return { rows: rows.map(o => ({ ...o, actionText: ACT[o.action] })), csv: csv.join("\n") + "\n" };
+    }
+
     /* ---------------------------------------------------------------- assistant */
     /* one message as plain text, for POST /api/draft: an input id, a thread id, or pasted text */
     function messageText(idOrText, T) {
@@ -837,6 +1004,10 @@
         known: knownAt(T).map(k => ({ ref: k.ref, key: `${k.region}|${k.sku}|${k.month}`, cs: k.cs, text: k.text, input: k.input })),
         threads,
         answerKey: ak ? { headline: ak.headline, lean: ak.leanText } : undefined,
+        purchasing: { note: "One buyer's watch list of pooled orders at Central Intake, not every order and no stock on hand. Cases.",
+          open: purchaseNews(T).filter(i => i.open).map(i => ({ id: i.id, kind: i.kind, date: i.date, title: i.title, detail: i.text })),
+          orders: poAt(T).filter(l => l.open > 0).map(l => ({ po: l.id, sku: l.sku, open: l.open, due: l.due })),
+          asked: ordersAt(T).rows.map(o => ({ date: o.date, action: o.action, sku: o.sku, po: o.po || null, cases: o.qty, by: o.by, why: o.reason })) },
       };
     }
 
@@ -845,7 +1016,7 @@
       inputs, byId, sheets, versionsAll, ITEMS, regionName,
       baseAt, prevBase, planAt, editsAt, inputsAt, threadsAt, editLive, sheetsAt, cycleAt, latestSheet, requestAt, decisionAt, checks, needs, fmt, sign,
       // v3
-      options: OPT, draft, review, flags, flagGroups, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, knownAt, shipAt, expectShip, expectSales, lineChecks, isSeasonal, lastPlanFor, toCases, addM,
+      options: OPT, draft, review, flags, flagGroups, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, knownAt, poAt, purchaseNews, ordersAt, shipAt, expectShip, expectSales, lineChecks, isSeasonal, lastPlanFor, toCases, addM,
     };
   }
 
