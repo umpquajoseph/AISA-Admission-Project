@@ -224,7 +224,7 @@
    *   versions  plans published here; each becomes the plan in force from its date */
   function Desk(D, record) {
     const ref = D;
-    record = Object.assign({ inputs: [], edits: [], decisions: [], versions: [], changes: [] }, record || {});
+    record = Object.assign({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [] }, record || {});
     const OPT = Object.assign({ tol: 0.35, min: 30, swingTol: 0.15, swingMin: 10 }, record.options || {});
     const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
     const regionName = c => (D.regions.find(r => r.code === c) || {}).name || c;
@@ -248,6 +248,13 @@
     }
     for (const ev of SY.events) inputs.push({ id: "cal:" + ev.id + "@" + ev.known_on, kind: "calendar", date: ev.known_on, time: "", origin: "packet", synthetic: true, src: "synthetic/calendar.csv", event: ev, region: ev.region });
     for (const a of record.inputs) inputs.push({ ...a, origin: "added", synthetic: a.synthetic || !!(a.mail && a.mail.synthetic) });
+    // the head manager removed these: a sheet, an email or a calendar row drops out of every view
+    // (a removed correction lets the file it replaced count again, since it never resolves)
+    const REMOVED = new Set((record.removed || []).map(r => r.input));
+    for (let i = inputs.length - 1; i >= 0; i--) if (REMOVED.has(inputs[i].id)) inputs.splice(i, 1);
+    // the head manager's edits to report cells: the latest per (sheet, key) wins; cs null restores the original
+    const REDIT = {};
+    for (const e of (record.reportEdits || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""))) REDIT[e.sheet + "#" + e.key] = e;
     inputs.forEach((x, i) => {
       x.seq = i;
       // messages about one matter share a thread: an email subject without RE:/FW:, or a calendar event id
@@ -270,6 +277,16 @@
       x.cycle = x.cycle || guessCycle(read);
       const earlier = Object.keys(lastOf).filter(k => k.startsWith(x.region + "|") && k.split("|")[1] < x.cycle).sort().pop();
       const res = resolveSheet(read, x.region, x.cycle, earlier ? lastOf[earlier].cells : null, ref);
+      for (const e of Object.values(REDIT)) {
+        if (e.sheet !== x.id || e.cs == null || e.cs === "") continue;
+        const [, sku, month] = e.key.split("|");
+        const cell = res.cells[e.key] || (res.cells[e.key] = { sku, month, local: null, unit: "CS", orig: null, row: null, note: "", rule: [], cycle: x.cycle });
+        cell.edited = { was: cell.cs == null ? null : cell.cs, date: e.date, reason: e.reason || "", id: e.id };
+        cell.cs = +e.cs;
+        cell.rule.push(`edited by head manager: was ${cell.edited.was == null ? "blank" : Math.round(cell.edited.was * 10) / 10}`);
+        res.problems = res.problems.filter(p => !p.includes(`${sku} ${month} `));
+      }
+      res.counts.edited = Object.values(res.cells).filter(c => c.edited).length;
       Object.assign(x, res, { layout: read.layout, author: read.author, hub: read.hub || (D.regions.find(r => r.code === x.region) || {}).hub, dated: read.dated });
       x.replaces = lastOf[x.region + "|" + x.cycle] ? lastOf[x.region + "|" + x.cycle].id : null;
       if (x.replaces) byId[x.replaces].replacedBy = x.id;
