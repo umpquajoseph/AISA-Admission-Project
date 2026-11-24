@@ -17,6 +17,9 @@ from pathlib import Path
 
 import openpyxl
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import shipments  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 PACKET = ROOT / "Dutch_Bros_Techincal_Packet"
 PLANNING = PACKET / "Planning"
@@ -211,6 +214,44 @@ def read_menu_names():
     return names
 
 
+# ---------------------------------------------------------------- shipments and shops
+def read_shipments():
+    """Monthly net planning cases shipped per region|SKU (accepted revisions as of the
+    packet cutoff), plus each amendment that changed a month after the fact, so the
+    page can show shipments as they were known on any date."""
+    versions, problems = shipments.load()
+    final = shipments.on_record(versions, "2026-09-18T23:59:59Z")
+    amend = []
+    for line, m in final.items():
+        if m["rev"] == 1:
+            continue
+        old = max((v for (l, r), v in versions.items() if l == line and r < m["rev"]), key=lambda v: v["rev"])
+        if abs(old["cs"] - m["cs"]) > 1e-9 or old["ship"][:7] != m["ship"][:7]:
+            amend.append(dict(line=line, region=m["region"], sku=m["sku"], accepted=m["at"][:10],
+                              month=m["ship"][:7], old_cs=round(old["cs"], 3), cs=round(m["cs"], 3),
+                              old_unit=old["unit"], unit=m["unit"]))
+    ties = shipments.tie_to_controls(versions)
+    tied = sum(1 for t in ties if abs(t["ours"] - t["control"]) < 0.01 and t["n"] == t["n_control"])
+    last_ship = max(m["ship"] for m in final.values())
+    return dict(monthly=shipments.monthly(final), amendments=sorted(amend, key=lambda a: a["accepted"]),
+                through=last_ship, controls_tied=f"{tied}/{len(ties)}", problems=problems)
+
+
+def read_shops():
+    """Open shops per region at each month end, Jan 2025 to Dec 2027 (directory as of Sep 18)."""
+    rows = list(csv.DictReader(open(PACKET / "POS_reference/POS_Shop_Directory.csv", newline="",
+                                    encoding="utf-8-sig")))
+    out = defaultdict(dict)
+    for y in (2025, 2026, 2027):
+        for mo in range(1, 13):
+            nxt = f"{y + (mo == 12):04d}-{mo % 12 + 1:02d}-01"
+            for r in rows:
+                out[r["region_code"]].setdefault(f"{y:04d}-{mo:02d}", 0)
+                if r["open_date"] < nxt:
+                    out[r["region_code"]][f"{y:04d}-{mo:02d}"] += 1
+    return out
+
+
 # ---------------------------------------------------------------- main
 def main():
     ref = read_reference()
@@ -230,7 +271,8 @@ def main():
         items=ref["items"], regions=ref["regions"], events=ref["events"],
         crosswalk=ref["crosswalk"], release_log=ref["release_log"], intake_log=ref["intake_log"],
         releases=releases, submissions=submissions, emails=emails,
-        sales_use=sales,
+        sales_use=sales, sales_through="2026-09-18",
+        shipments=read_shipments(), shops=read_shops(),
         sales_drinks=[dict(menu_id=m, sku=s, name=menu.get(m, {}).get("menu_description") or
                            menu.get(m, {}).get("name")) for m, s in std_drinks],
     )
