@@ -8,13 +8,7 @@ Read first: `C:\Users\umpqu\.claude\CLAUDE.md` (global rules), `C:\AISA\CLAUDE.m
 `C:\AISA\prompt.md` (the AISA brief). Due Sat 28 Nov 2026; the user wants it done
 tonight and tomorrow.
 
-## What the site is, in the user's words
-
-> "its just a site to manage and view data easily, with it aiming to be as
-> hands-free as possible, with a complementary ai agent you can quiz about the
-> data and whatnot"
-
-> "its basically like an excel extension its not even that complx"
+## What the site is
 
 The user is the **head manager** (central supply planner for Dutch Bros). Six
 regional managers, now called **submanagers**, send monthly request sheets. The
