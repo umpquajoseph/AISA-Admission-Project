@@ -402,7 +402,7 @@
     const SALES_DRINK = Object.fromEntries((D.sales_drinks || []).map(d => [d.sku, d.name]));
     const addM = (m, k) => { const [y, mo] = m.split("-").map(Number), t = y * 12 + mo - 1 + k; return `${Math.floor(t / 12)}-${pad(t % 12 + 1)}`; };
     const mShort = m => MON[+m.slice(5) - 1];
-    const mRange = (a, b) => a === b ? `${mShort(a)} ${a.slice(2, 4)}` : `${mShort(a)}–${mShort(b)} ${b.slice(2, 4)}`;
+    const mRange = (a, b) => a === b ? `${mShort(a)} ${a.slice(2, 4)}` : a.slice(0, 4) === b.slice(0, 4) ? `${mShort(a)}–${mShort(b)} ${b.slice(2, 4)}` : `${mShort(a)} ${a.slice(2, 4)}–${mShort(b)} ${b.slice(2, 4)}`;
     const r0 = v => Math.round(v);
     const pct = v => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(Math.round(v * 1000) / 10)}%`;
     const epc = (region, sku) => { const x = D.crosswalk.find(c => c.region === region && c.sku === sku); return x ? x.ea_per_case : ITEMS[sku].ea_per_case; };
@@ -562,7 +562,11 @@
             if (s0) ln.gap = s0.d;
           }
           if (kn.length) ln.note = kn.map(k => `${k.text} (${k.ref})`).join("; ");
-          const dec = decisionAt(T, "draft:" + cycle + "|" + key);
+          // a decision on the line: v3 target "draft:<cycle>|<key>", or the v2 screens' buttons
+          // (decision "line:<sheet>|<key>" = keep plan; an edit from this sheet on this key = use the request)
+          let dec = decisionAt(T, "draft:" + cycle + "|" + key);
+          if (!dec) { const old = decisionAt(T, "line:" + s.id + "|" + key); if (old) dec = { ...old, outcome: old.outcome === "keep" ? "keep" : old.outcome }; }
+          if (!dec) { const e = record.edits.filter(e => e.src === s.id && e.key === key && editLive(e, T)).pop(); if (e) dec = { id: e.id, date: e.date, target: "edit", outcome: "request", note: e.reason }; }
           if (dec) ln.decision = dec;
           ln.value = !dec ? ln.asked : dec.outcome === "keep" ? last : dec.outcome === "set" ? +dec.value : ln.asked;
           ln.settled = ln.status === "accepted" || (!!dec && dec.outcome !== "question");
@@ -581,6 +585,17 @@
     function flags(T, cycle) {
       const d = draft(T, cycle); if (!d) return [];
       return d.lines.filter(l => l.status === "needs" || l.status === "problem").sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
+    }
+    /* Review screen rows: the flagged lines with the numbers side by side */
+    function review(T, cycle) {
+      const d = draft(T, cycle); if (!d) return { lines: [], total: null, sheets: 0 };
+      const L = d.lines.filter(l => l.status === "needs" || l.status === "problem").sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).map(l => {
+        const sh = l.checks.find(c => c.id === "ship"), sa = l.checks.find(c => c.id === "sales");
+        return { key: l.key, region: l.region, sku: l.sku, month: l.month, last: l.last, ask: l.asked, expected: sh ? sh.expected : sa ? sa.expected : null, sales: sa ? sa.expected : null,
+          why: l.reason, detail: l.checks.map(c => `${c.name}: ${c.detail}`).join(" · "), method: l.checks.filter(c => !c.ok).map(c => c.method).join("; "),
+          sheet: l.sheet, note: l.note || (l.cell && l.cell.rule.join("; ")) || "", status: l.status, decision: l.decision || null, settled: l.settled, value: l.value, synthetic: l.synthetic, checks: l.checks };
+      });
+      return { lines: L, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
     }
     /* the same flags grouped by region × item: one decision often covers several months */
     function flagGroups(T, cycle) {
@@ -726,7 +741,7 @@
       inputs, byId, sheets, versionsAll, ITEMS, regionName,
       baseAt, prevBase, planAt, editsAt, inputsAt, threadsAt, editLive, sheetsAt, cycleAt, latestSheet, requestAt, decisionAt, checks, needs, fmt, sign,
       // v3
-      options: OPT, draft, flags, flagGroups, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, knownAt, shipAt, expectShip, expectSales, lineChecks, isSeasonal, lastPlanFor, toCases, addM,
+      options: OPT, draft, review, flags, flagGroups, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, knownAt, shipAt, expectShip, expectSales, lineChecks, isSeasonal, lastPlanFor, toCases, addM,
     };
   }
 
