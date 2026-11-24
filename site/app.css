@@ -292,6 +292,7 @@ svg.chart .pt.sales { fill: var(--ok); }
 .qa .q { font-weight: 600; }
 .qa .a { margin: 4px 0; white-space: pre-line; }
 .qa .cites { display: flex; gap: 4px; flex-wrap: wrap; }
+.qa .aact { display: flex; gap: var(--s); align-items: center; flex-wrap: wrap; margin: 4px 0; }
 
 /* submanager page */
 .drop { border: 2px dashed var(--border); background: var(--card); padding: var(--xl); display: flex; flex-direction: column; align-items: center; gap: var(--s); max-width: 760px; }

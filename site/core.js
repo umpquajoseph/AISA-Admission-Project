@@ -1025,6 +1025,12 @@
         changes: ch, decisions: dec,
         versions: versionsAll.filter(v => v.date <= T).map(v => ({ id: v.id, name: v.name, date: v.date, cycle: v.cycle, role: v.role, status: v.status, note: v.note || undefined })),
         sheets: sheetsAt(T).filter(s => !cyc || s.cycle >= addM(cyc, -1)).map(s => ({ id: s.id, src: s.src, date: s.date, region: s.region, cycle: s.cycle, replaces: s.replaces || undefined, problems: (s.problems || []).length || undefined })),
+        // every line of each region's latest sheet this cycle, in cases, after the head manager's corrections
+        requests: cyc ? (() => { const ms = cycleMonths(cyc), out = { months: ms, sheets: {} };
+          for (const r of D.regions) { const s = latestSheet(T, r.code, cyc); if (!s) continue; const rows = {};
+            for (const c of Object.values(s.cells)) (rows[c.sku] = rows[c.sku] || ms.map(() => null))[ms.indexOf(c.month)] = c.cs == null ? (c.raw ? String(c.raw) : null) : Math.round(c.cs * 10) / 10;
+            out.sheets[r.code] = { sheet: s.id, sent: s.date, lines: rows }; }
+          return out; })() : null,
         draft: rv.headline ? { cycle: rv.cycle, headline: rv.headline, lastPlan: rv.lastPlan && rv.lastPlan.name, flags: rv.lines.slice(0, opts.flags || 30).map(l => ({ key: l.key, last: l.last, ask: l.ask, expected: l.expected, why: l.why, note: l.note || undefined, decision: l.decision ? l.decision.outcome : undefined })) } : null,
         known: knownAt(T).map(k => ({ ref: k.ref, key: `${k.region}|${k.sku}|${k.month}`, cs: k.cs, text: k.text, input: k.input })),
         threads,

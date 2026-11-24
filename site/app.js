@@ -591,11 +591,17 @@ function bindBuy() {
     const it = buyItem(a.item), q = parseFloat(a.qty);
     if (isNaN(q) || q <= 0) return f.querySelector('[data-a="qty"]').focus();
     if (!a.by) return f.querySelector('[data-a="by"]').focus();
-    const o = { id: uid("o"), date: S.date, item: a.item, kind: it ? it.kind : "", action: a.action, sku: a.sku, po: a.po || "", qty: q, by: a.by, reason: (a.reason || "").trim() || (it ? it.title : ""), title: it ? it.title : a.item };
-    R.orders.push(o);
-    S.flash = { tab: "news", order: true, undo: { orders: [o.id] }, text: `Asked purchasing: ${actWord(o.action)} ${fmt(q)} cases of ${itemName(o.sku)}${o.po ? ` on ${o.po}` : ""} by ${dlabel(o.by)}.` };
-    S.ask = null; commit();
+    S.ask = null; saveOrder({ ...a, qty: q });
   };
+}
+/* an ask of purchasing from a Late news item; the card and Ask's Approve both save through here */
+function saveOrder(a) {
+  const it = buyItem(a.item);
+  const o = { id: uid("o"), date: S.date, item: a.item, kind: it ? it.kind : "", action: a.action, sku: a.sku || (it && it.sku), po: a.po || "", qty: +a.qty, by: a.by, reason: (a.reason || "").trim() || (it ? it.title : ""), title: it ? it.title : a.item };
+  R.orders.push(o);
+  S.flash = { tab: "news", order: true, undo: { orders: [o.id] }, text: `Asked purchasing: ${actWord(o.action)} ${fmt(o.qty)} cases of ${itemName(o.sku)}${o.po ? ` on ${o.po}` : ""} by ${dlabel(o.by)}.` };
+  commit();
+  return o;
 }
 /* a sheet that arrived after the month was published: its new numbers are not in the plan until taken */
 function lateSheets(pub) {
@@ -617,7 +623,8 @@ function lateNewsForAI() {
   const X = context(), N = X.news, th = t => ({ id: t.thread.id, kind: t.thread.kind, title: t.thread.title, region: t.thread.region ? regName(t.thread.region) : null, date: t.thread.last });
   return {
     note: "Exactly what the Late news screen shows open on asOf. Full messages are in threads.",
-    open: [...N.open.map(th), ...N.buy.map(i => ({ id: i.id, kind: PKIND[i.kind], title: i.title, from: i.from, detail: i.text, date: i.date })),
+    open: [...N.open.map(th), ...N.buy.map(i => ({ id: i.id, kind: PKIND[i.kind], title: i.title, from: i.from, detail: i.text, date: i.date, sku: i.sku,
+        suggest: { ...i.prefill, qty: Math.round(i.prefill.qty * 100) / 100 }, openOrders: i.lines.filter(l => l.open > 0).map(l => ({ po: l.id, open: l.open })) })),
       ...X.late.filter(x => x.pending).map(x => ({ id: x.sheet.id, kind: "late sheet", region: regName(x.sheet.region), lines: x.open.length, date: x.sheet.date }))],
     waiting: N.waiting.map(t => ({ ...th(t), waitingOn: t.decision.note || "" })),
     dockAndOrders: N.other.map(th),
@@ -735,18 +742,22 @@ function bindChangeCard() {
       const cur = (desk.working(S.date).grid[c.region + "|" + c.sku] || {})[c.month];
       if (moveAll(c)) c.qty = cur;
       if (isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
-      const calcText = cardCalc(c);
-      const cid = uid("c");
-      R.changes.push({ id: cid, date: S.date, type: c.type, ref: c.ref, key: `${c.region}|${c.sku}|${c.month}`, qty: +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
-      const dt = decideThread(c.thread, "changed", c.reason, c.ref, c.month);
-      S.flash = { tab: "news", change: true, undo: { changes: [cid], decisions: dt.ids }, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + dt.text };
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
-      commit();
-      // what the change sent to purchasing by itself
-      const sent = (desk.purchaseNews(S.date).autos || []).filter(o => o.sku === c.sku && ([c.month, c.to].includes(o.month) || o.src === c.month) && o.by >= S.date);
-      if (sent.length) { S.flash.text += ` Added to purchasing's list: ${sent.map(o => `${o.action === "cut" ? `cut ${fmt(o.qty)} cases from ${o.po || "the next order"}` : `order ${fmt(o.qty)} cases`} for ${mlabel(o.month)}`).join(", ")}.`; renderPage(); }
+      saveChange(c);
     };
   });
+}
+/* a typed plan change; the change card and Ask's Approve both save through here. Returns the save notice. */
+function saveChange(c) {
+  const calcText = cardCalc(c), cid = uid("c");
+  R.changes.push({ id: cid, date: S.date, type: c.type, ref: c.ref || "", key: `${c.region}|${c.sku}|${c.month}`, qty: +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread || null, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
+  const dt = c.thread ? decideThread(c.thread, "changed", c.reason, c.ref, c.month) : { ids: [], text: "" };
+  S.flash = { tab: "news", change: true, undo: { changes: [cid], decisions: dt.ids }, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + dt.text };
+  commit();
+  // what the change sent to purchasing by itself
+  const sent = (desk.purchaseNews(S.date).autos || []).filter(o => o.sku === c.sku && ([c.month, c.to].includes(o.month) || o.src === c.month) && o.by >= S.date);
+  if (sent.length) { S.flash.text += ` Added to purchasing's list: ${sent.map(o => `${o.action === "cut" ? `cut ${fmt(o.qty)} cases from ${o.po || "the next order"}` : `order ${fmt(o.qty)} cases`} for ${mlabel(o.month)}`).join(", ")}.`; renderPage(); }
+  return S.flash.text;
 }
 async function aiDraft(threadId) {
   if (S.aiBusy) return;
@@ -1072,25 +1083,63 @@ function histCompare() {
 function pageAsk() {
   const examples = ["Why did Gulf Coast mango October change?", "What changed since the last published plan?", "What is Late news still waiting on?"];
   const hist = S.asks || [];
+  const actHtml = (a, k) => `<div class="aact">${a.done
+    ? `<span>✓ ${esc(a.done.text)}</span> <button class="btn small link" data-aundo="${k}">Undo</button>`
+    : `<button class="btn small primary" data-approve="${k}">Approve</button> <span>${esc(a.label)}</span>${a.checks && a.checks.length ? ` <span class="warn-text">${a.checks.map(esc).join(" · ")}</span>` : ""}${a.gone ? ` <span class="hint">${esc(a.gone)}</span>` : ""}`}</div>`;
   $("page").innerHTML = `<div class="ask">
-    ${head("Ask", "Ask a question about the plan, a sheet, an email or a change. The answer comes only from this desk's record and names its source.")}
-    <form class="askbox" id="askForm"><textarea id="askQ" placeholder="Ask about the plan, a sheet, an email or a change">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : "Ask"}</button></form>
+    ${head("Ask", "Ask about the plan, a sheet, an email or a change, or tell it what to do with a Late news item. Answers come only from this desk's record. Nothing changes until you click Approve.")}
+    ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer)}</div>
+      ${(h.actions || []).map((a, j) => actHtml(a, `${i}|${j}`)).join("")}
+      <div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}</div></div>`).join("")}
+    <form class="askbox" id="askForm"><textarea id="askQ" placeholder="${hist.length ? "Reply, or ask a follow-up" : "Ask about the plan, or say what to do with a Late news item"}">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : hist.length ? "Reply" : "Ask"}</button></form>
+    ${hist.length ? `<button class="btn small link" id="askNew">New topic</button>` : ""}
     ${AI.checked && !AI.connected ? `<div class="hint">${AI.server ? "The assistant is not connected here: the server has no API key." : "The assistant server is not running (npm run dev)."}</div>` : ""}
     ${hist.length ? "" : `<div class="chips">${examples.map(q => `<button class="chip" data-askex="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
-    ${hist.map(h => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer)}</div><div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}</div></div>`).join("")}
   </div>`;
   const ask = async q => {
     if (!q.trim() || S.asking) return;
     S.asking = true; S.askQ = q; renderPage();
-    const j = await aiCall("/api/ask", { question: q, context: desk.assistantContext(S.date, { lateNews: lateNewsForAI() }) });
+    const history = (S.asks || []).filter(h => !h.error).map(h => ({ q: h.q, a: h.answer }));
+    const j = await aiCall("/api/ask", { question: q, history, context: desk.assistantContext(S.date, { lateNews: lateNewsForAI() }) });
     S.asking = false; S.askQ = "";
-    (S.asks = S.asks || []).unshift({ q, date: S.date, ...(j.error ? { error: j.error } : j) });
+    (S.asks = S.asks || []).push({ q, date: S.date, ...(j.error ? { error: j.error } : j) });
     renderPage();
+    $("askForm").scrollIntoView({ block: "end" });
   };
+  const at = k => { const [i, j] = k.split("|"); return S.asks[+i].actions[+j]; };
   $("askForm").onsubmit = e => { e.preventDefault(); ask($("askQ").value); };
   $("askQ").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(e.target.value); } };
+  if ($("askNew")) $("askNew").onclick = () => { S.asks = []; S.askQ = ""; renderPage(); };
   document.querySelectorAll("[data-askex]").forEach(b => b.onclick = () => ask(b.dataset.askex));
+  document.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => { const a = at(b.dataset.approve); approveAction(a); renderPage(); });
+  document.querySelectorAll("[data-aundo]").forEach(b => b.onclick = () => { const a = at(b.dataset.aundo), u = a.done.undo; a.done = null; undoFlash(u); });
   sideFoot();
+}
+/* Approve on an action Ask proposed: saves exactly as the Late news card would, and keeps the Undo */
+function approveAction(a) {
+  a.gone = "";
+  const ln = lateNewsForAI(), live = [...ln.open, ...ln.waiting].find(x => x.id === a.target);
+  if (a.target && !live) { a.gone = "This item is no longer open."; return; }
+  if (a.kind === "decide") {
+    const late = context().late.find(x => x.sheet.id === a.target && x.pending);
+    if (late) { // a late sheet: keep the plan on every line that differs
+      const ids = [];
+      for (const l of late.open) { const id = uid("d"); ids.push(id); R.decisions.push({ id, date: S.date, target: `line:${late.sheet.id}|${l.key}`, outcome: "keep", note: a.note || "Kept the plan" }); }
+      const id = uid("d"); ids.push(id); R.decisions.push({ id, date: S.date, target: late.sheet.id, outcome: "no-change", note: a.note || "Kept the plan" });
+      S.flash = { tab: "news", undo: { decisions: ids }, text: `${regName(late.sheet.region)}'s ${dlabel(late.sheet.date)} sheet: kept the plan.` };
+    } else {
+      const dt = decideThread(a.target, a.outcome, a.note);
+      S.flash = { tab: "news", undo: { decisions: dt.ids }, text: `${threadTitle(a.target)}: ${a.outcome === "waiting" ? "waiting on someone" : "no change needed"}.` + dt.text };
+    }
+    commit();
+  } else if (a.kind === "order") {
+    saveOrder({ item: a.target, action: a.action, qty: a.qty, by: a.by, po: a.po, reason: a.reason });
+  } else {
+    const th = a.target && desk.threadsAt(S.date).find(t => t.id === a.target);
+    saveChange({ type: a.type, region: a.region, sku: a.sku, month: a.month, qty: a.qty, unit: a.unit, to: a.to, reason: a.reason || a.label, quote: "", ai: true,
+      thread: a.target || null, ref: th ? (th.kind === "calendar" ? th.id.replace(/^cal:/, "") : th.id) : a.target || "" });
+  }
+  a.done = { text: S.flash.text, undo: S.flash.undo };
 }
 
 /* ================================================================ Submanager page: region → sheet → late request → done */
