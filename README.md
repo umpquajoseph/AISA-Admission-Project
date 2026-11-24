@@ -33,7 +33,7 @@ git-ignored `.dev.vars`; without it the AI buttons say "Assistant not connected"
 | Sheets in | Six region boxes; open a sheet to see or correct what it asks for |
 | Check | Only the lines that fail a check against shipments and sales |
 | Publish | The draft until published, then the plan in force; click a number for its story and what is on order |
-| Late news | Emails, submanager requests, calendar entries, late sheets and purchasing news (Short, Too much, Too late, requisitions); change the plan, ask purchasing, or mark no change |
+| Late news | Emails, submanager requests, calendar entries, late sheets and purchasing news (Short, Too late, requisitions); plan changes send their order actions by themselves |
 | Send to purchasing | The plan in force, every line, with changes since publishing marked; plus the order actions (order more, cut, rush) as a second CSV |
 | History | Everything that happened; trends; compare versions |
 | Ask | Questions answered from the record, with sources |

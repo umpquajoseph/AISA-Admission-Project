@@ -527,23 +527,18 @@ function pageNews(X) {
   foot({ back: { label: "Publish", act: () => go("publish") }, note: N.count ? `${plural(N.count, "item")} still open` : "", main: { label: "Next: send to purchasing", act: () => go("send") } });
 }
 const decFormHtml = id => S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}"><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : "";
-/* purchasing news: a short or late order, too much on order, too late to order, a requisition */
-const PKIND = { short: "Short", much: "Too much", late: "Too late", request: "Request" };
+/* purchasing news: a short or late order, too late to order, a requisition */
+const PKIND = { short: "Short", late: "Too late", request: "Request" };
 const ACTS = [["more", "Order more"], ["cut", "Cut the order"], ["rush", "Rush"]];
 const actWord = a => ({ more: "order more", cut: "cut the order by", rush: "rush" })[a] || a;
-function orderLines(it) {
-  if (!it.lines.length) return "";
-  return it.lines.map(l => `<div class="hint">${it.already ? "Already on order for the plan as published: " : "Order "}${esc(l.id)}, ${fmt(l.qty)} cases ordered, ${fmt(l.received)} received${l.cancelled ? `, ${fmt(l.cancelled)} cut` : ""}, ${fmt(l.open)} still to come${l.due ? `, due ${dlabel(l.due)}` : ""}.</div>`).join("");
-}
 function buyRow(it) {
   const id = it.id, open = S.open[id];
   return `<div class="mrow ${open ? "open" : ""}">
     <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${it.kind}">${PKIND[it.kind]}</span><b>${esc(it.title)}</b><span class="reg">${esc(it.region ? regName(it.region) : "All regions")}</span><span class="hint">${dlabel(it.date)}</span><span class="chev">${open ? "▾" : "▸"}</span></div>
     ${open ? `<div class="mbody">
       <div class="msg">${it.source || it.synthetic ? `<div class="hint">${esc([it.source, it.synthetic && "made up for rehearsal"].filter(Boolean).join(" · "))}</div>` : ""}<div>${esc(it.text)}</div>${it.quote ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}</div>
-      ${orderLines(it)}
       ${it.asked.length ? `<div style="margin-top:4px">Already asked: ${it.asked.map(o => `${actWord(o.action)} ${fmt(o.qty)} cases by ${dlabel(o.by)} (${dlabel(o.date)})`).join("; ")}</div>` : ""}
-      <div class="acts"><button class="btn small primary" data-ask="${esc(id)}">Ask purchasing</button><button class="btn small" data-buyplan="${esc(id)}">Change the plan</button><button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button></div>
+      <div class="acts"><button class="btn small primary" data-ask="${esc(id)}">${it.prefill.action === "more" && it.kind === "short" ? `Order ${fmt(it.prefill.qty)} more` : it.prefill.action === "rush" ? `Rush ${fmt(it.prefill.qty)} cases` : "Ask purchasing"}</button><button class="btn small" data-buyplan="${esc(id)}">Change the plan</button><button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button></div>
       ${S.ask && S.ask.item === id ? askFormHtml(S.ask, it) : ""}
       ${S.cc && S.cc.thread === id ? changeCardHtml() : ""}
       ${decFormHtml(id)}</div>` : ""}
@@ -725,6 +720,9 @@ function bindChangeCard() {
       S.flash = { tab: "news", change: true, undo: { changes: [cid], decisions: dt.ids }, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + dt.text };
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
       commit();
+      // what the change sent to purchasing by itself
+      const sent = (desk.purchaseNews(S.date).autos || []).filter(o => o.sku === c.sku && [c.month, c.to].includes(o.month) && o.by >= S.date);
+      if (sent.length) { S.flash.text += ` Added to purchasing's list: ${sent.map(o => `${o.action === "cut" ? `cut ${fmt(o.qty)} cases from ${o.po}` : `order ${fmt(o.qty)} cases`} for ${mlabel(o.month)}`).join(", ")}.`; renderPage(); }
     };
   });
 }
@@ -770,11 +768,11 @@ function pageSend(X) {
     ${rows.length ? `<table class="plain review"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Published</th><th class="n">Now</th><th class="n">Change</th><th>Why</th><th>How</th></tr>
       ${rows.map(x => `<tr><td>${esc(x.region)}</td><td><a data-goto="plan:${keyOf(x)}">${esc(x.item)}</a></td><td>${mlabel(x.month)}</td><td class="n">${fmt(x.released)}</td><td class="n"><b>${fmt(x.proposed)}</b></td><td class="n ${x.d > 0 ? "up" : "down"}">${sign(x.d)}</td><td class="why" title="${esc(x.reason)}">${esc(x.reason)}</td><td class="hint">${esc(x.how)}</td></tr>`).join("")}</table>` : ""}
     <h2>Order actions</h2>
-    ${oa.rows.length ? `<p class="sum"><b>${plural(oa.rows.length, "order action")}</b> you asked for under Late news. They go to purchasing as a second file, ${esc(ofile)}.</p>
-      <table class="plain review"><tr><th>Asked</th><th>Action</th><th>Item</th><th>Order</th><th class="n">Cases</th><th>By</th><th>Why</th></tr>
+    ${oa.rows.length ? `<p class="sum"><b>${plural(oa.rows.length, "order action")}</b> from your plan changes and Late news. They go to purchasing as a second file, ${esc(ofile)}.</p>
+      <table class="plain review"><tr><th>Since</th><th>Action</th><th>Item</th><th>Order</th><th class="n">Cases</th><th>By</th><th>Why</th></tr>
       ${oa.rows.map(o => `<tr><td>${dlabel(o.date)}</td><td><b>${esc(o.actionText)}</b></td><td>${esc(itemName(o.sku))}</td><td>${esc(o.po || "new order")}</td><td class="n">${fmt(o.qty)}</td><td>${dlabel(o.by)}</td><td class="why" title="${esc(o.reason)}">${esc(o.reason)}</td></tr>`).join("")}</table>
       <div class="acts"><button class="btn" id="dlOrders">Download the order actions</button>${S.sentOrders === S.date ? ` <span class="hint">Saved ${esc(ofile)} to your downloads folder.</span>` : ""}</div>`
-    : `<p class="hint">No order actions. Ask purchasing from a Late news item to order more, cut an order or rush one.</p>`}`;
+    : `<p class="hint">No order actions. A plan change sends its order here by itself; a Short in Late news can add one.</p>`}`;
   if ($("dlOrders")) $("dlOrders").onclick = () => { download(ofile, oa.csv, "text/csv"); S.sentOrders = S.date; renderPage(); };
   foot({ back, note: S.sent === S.date ? `Saved ${file} to your downloads folder. Send it to purchasing${oa.rows.length ? ", with the order actions" : ""}.` : X.news.count ? `${plural(X.news.count, "item")} in Late news still open, not in this plan` : "", main: { label: "Download the plan for purchasing", act: () => { download(file, rl.csv, "text/csv"); S.sent = S.date; renderPage(); } } });
 }
