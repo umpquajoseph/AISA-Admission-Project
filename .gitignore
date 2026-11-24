@@ -7,3 +7,8 @@ __pycache__/
 
 # Built from the packet by pipeline/build_data.py; carries packet contents
 site/data.js
+
+# Assistant key for local dev (Cloudflare secret in production); never committed
+.dev.vars
+# npm
+node_modules/
