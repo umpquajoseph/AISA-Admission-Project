@@ -99,11 +99,19 @@ async function aiCall(path, body) {
   } catch (e) { return { error: "Assistant server not running" }; }
 }
 function render() { indexArrivals(); if (ROLE === "manager") return renderManager(); renderClock(); renderPage(); }
+window.addEventListener("popstate", e => { if (e.state && e.state.tab) { S.tab = e.state.tab; shownTab = S.tab; renderPage(); } });
 window.addEventListener("storage", e => {                  // another tab (the manager page) changed the record
   if (e.key === KEY + "record") { R = { ...emptyRecord(), ...load("record", {}) }; desk = C.Desk(D, R); render(); }
   if (e.key === KEY + "date" && ROLE === "manager") { S.date = load("date", S.date); render(); }
 });
+let shownTab = null;
 function renderPage() {
+  if (shownTab !== S.tab) {
+    const u = new URL(location.href); u.searchParams.delete("example"); u.searchParams.delete("date"); u.searchParams.set("tab", S.tab);
+    if (shownTab === null) history.replaceState({ tab: S.tab }, "", u); else history.pushState({ tab: S.tab }, "", u);
+    if (S.tab !== "review") S.revRegion = null;
+    shownTab = S.tab;
+  }
   save("tab", S.tab);
   $("tabs").innerHTML = TABS.map(([id, n]) => {
     const c = id === "inbox" || id === "review" ? countNeeds(id) : 0;
@@ -142,7 +150,7 @@ function pageInbox() {
     const s = desk.latestSheet(S.date, r.code, cyc);
     if (!s) return `<div class="tile wait" data-region="${r.code}"><b>${esc(r.name)}</b><span>not yet received</span></div>`;
     const st = s.problems.length ? `<span class="bad">${s.problems.length} problem${s.problems.length > 1 ? "s" : ""}</span>` : s.replaces ? `<span>corrected</span>` : `<span class="ok">✓</span>`;
-    return `<button class="tile ${S.sheetView === s.id ? "on" : ""}" data-sheet="${esc(s.id)}" data-region="${r.code}"><b>${esc(r.name)}</b><span>received ${dlabel(s.date)}</span>${st}${review[r.code] ? `<a class="rv" data-tab="review">${review[r.code]} to review</a>` : ""}</button>`;
+    return `<button class="tile ${S.sheetView === s.id ? "on" : ""}" data-sheet="${esc(s.id)}" data-region="${r.code}"><b>${esc(r.name)}</b><span>received ${dlabel(s.date)}</span>${st}${review[r.code] ? `<span class="rv">${review[r.code]} to review</span>` : ""}</button>`;
   }).join("") : "";
   const pub = R.versions.filter(v => v.date <= S.date).map(v => v.date).sort().pop(), base = desk.baseAt(S.date), since = pub || (base ? base.date : "");
   const lastDate = t => t.thread.items[t.thread.items.length - 1].date;
@@ -187,6 +195,7 @@ function msgHtml(x, full) {
 }
 function bindInbox() {
   document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { S.open[b.dataset.toggle] = !S.open[b.dataset.toggle]; renderPage(); });
+  document.querySelectorAll("[data-revregion]").forEach(b => b.onclick = e => { e.stopPropagation(); S.revRegion = b.dataset.revregion; S.tab = "review"; renderPage(); });
   document.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { S.sheetView = S.sheetView === b.dataset.sheet ? null : b.dataset.sheet; renderPage(); });
   document.querySelectorAll("[data-work]").forEach(b => b.onclick = () => { const th = desk.threadsAt(S.date).find(t => t.id === b.dataset.work); S.cc = newCard(th); renderPage(); });
   bindChangeCard();
@@ -311,7 +320,7 @@ function sheetViewHtml(id) {
     }).join("")}</tr>`;
   }).join("");
   return `<div class="sheetview" id="sheetView">
-    <div class="head"><b>${esc(regName(s.region))} · ${mlong(s.cycle)} sheet</b> <span class="hint">${esc(short(s.src))} · received ${dlabel(s.date)} · ${esc(s.author || "")} · layout “${esc(s.layout)}”</span> <button class="btn small" data-sheet="${esc(id)}">Close</button></div>
+    <div class="head"><b>${esc(regName(s.region))} · ${mlong(s.cycle)} sheet</b> <span class="hint">${esc(short(s.src))} · received ${dlabel(s.date)} · ${esc(s.author || "")} · layout “${esc(s.layout)}”</span> ${desk.review(S.date).lines.some(l => !l.settled && l.region === s.region) ? `<button class="btn small primary" data-revregion="${s.region}">Review these →</button>` : ""}<button class="btn small" data-sheet="${esc(id)}">Close</button></div>
     <div class="hint">${s.counts.cells} lines read · ${s.counts.ea} converted from EA · ${s.counts.carried} blanks carried from the cycle before (grey) · ${s.counts.cancelled} zeros (month cancelled)${prev ? ` · replaces the ${dlabel(prev.date)} file: ${changed} line${changed === 1 ? "" : "s"} changed (blue)` : ""}${s.note || (s.meta && s.meta.note) ? ` · desk note: ${esc(s.note || s.meta.note)}` : ""}</div>
     ${s.problems.length ? `<div class="problems">${s.problems.map(esc).join("<br>")}</div>` : ""}
     <table class="grid compact"><tr><th class="l">Item</th><th>Unit</th>${months.map(m => `<th>${mlabel(m)}</th>`).join("")}</tr>${rows}</table>
@@ -327,7 +336,7 @@ function decide(key, outcome, value) {
   commit();
 }
 function pageReview() {
-  const cyc = desk.cycleAt(S.date), rv = reviewLines(), L = rv.lines.filter(l => !l.settled), done = rv.lines.filter(l => l.settled);
+  const cyc = desk.cycleAt(S.date), rv = reviewLines(), inR = l => !S.revRegion || l.region === S.revRegion, L = rv.lines.filter(l => !l.settled && inR(l)), done = rv.lines.filter(l => l.settled && inR(l));
   const got = cyc ? D.regions.filter(r => desk.latestSheet(S.date, r.code, cyc)).length : 0;
   const tile = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
   const outcome = l => ({ request: "used ask", keep: "kept plan", set: `set ${fmt(l.value)}`, question: "open question" })[l.decision && l.decision.outcome] || "";
@@ -350,11 +359,12 @@ function pageReview() {
   };
   const head = `<tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Last plan</th><th class="n">Asks</th><th class="n">Expected</th><th>Why</th><th></th></tr>`;
   $("page").innerHTML = `
-    <div class="planhead"><h1>Review${cyc ? ` · ${mlong(cyc)}` : ""}</h1>${rv.synthetic ? `<span class="pill Scenario">synthetic</span>` : ""}<div class="spacer"></div>${L.length === 0 && rv.total ? `<button class="btn primary" data-tab="plan">Go to publish →</button>` : ""}</div>
+    <div class="planhead"><h1>Review${cyc ? ` · ${mlong(cyc)}` : ""}</h1>${rv.synthetic ? `<span class="pill Scenario">synthetic</span>` : ""}${S.revRegion ? `<button class="chip on" id="revAll">${esc(regName(S.revRegion))} only ✕</button>` : ""}<div class="spacer"></div>${L.length === 0 && rv.total ? `<button class="btn primary" data-tab="plan">Go to publish →</button>` : ""}</div>
     <div class="stats">${tile(`${got}/6`, "sheets in", got === 6 ? "ok" : "")}${rv.total != null ? tile(fmt(rv.total), "lines") + tile(fmt(rv.accepted), "as asked", "ok") : ""}${tile(groups.length, "items need you", groups.length ? "warn" : "ok")}${done.length ? tile(done.length, "settled") : ""}</div>
     ${L.length ? `<table class="plain review flags">${head}${groups.map(groupRow).join("")}</table>` : `<div class="empty">${cyc ? "All settled." : "No sheets yet."}</div>`}
     ${done.length ? `<h2 class="toggle" data-toggle="settled">${S.open.settled ? "▾" : "▸"} Settled <span class="count grey">${done.length}</span></h2>${S.open.settled ? `<table class="plain review">${head}${done.map(l => lineRow(l, false)).join("")}</table>` : ""}` : ""}`;
   document.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const [k, o] = b.dataset.dec.split(/\|(?=[a-z]*$)/); decide(k, o || null); });
+  const ra = $("revAll"); if (ra) ra.onclick = () => { S.revRegion = null; renderPage(); };
   document.querySelectorAll("[data-decall]").forEach(b => b.onclick = () => { const [ks, o] = b.dataset.decall.split(/\|(?=[a-z]*$)/); const cyc = desk.cycleAt(S.date); for (const k of ks.split(",")) { R.decisions = R.decisions.filter(d => d.target !== `draft:${cyc}|${k}`); R.decisions.push({ id: uid("d"), date: S.date, target: `draft:${cyc}|${k}`, outcome: o }); } commit(); });
   document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => { S.setting = b.dataset.set; renderPage(); setTimeout(() => { const i = $("setVal"); if (i) { i.focus(); i.select(); } }); });
   document.querySelectorAll("[data-setform]").forEach(f => f.onsubmit = e => { e.preventDefault(); const v = parseFloat($("setVal").value); S.setting = null; if (!isNaN(v)) decide(f.dataset.setform, "set", v); else renderPage(); });
