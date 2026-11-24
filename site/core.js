@@ -72,7 +72,7 @@
       if (m) { [, author, hub, dated] = m; break; }
     }
     const entries = [], bad = [];
-    const add = (o, raw, row) => { const n = num(raw); if (n.bad) bad.push(`Row ${row}: “${n.bad}” is not a number`); entries.push({ ...o, qty: n.v, row }); };
+    const add = (o, raw, row) => { const n = num(raw); if (n.bad) bad.push(`Row ${row}: “${n.bad}” is not a number`); entries.push({ ...o, qty: n.v, raw: n.bad || null, row }); };
     if (layout === "Outbound needs") {
       for (let i = h + 1; i < rows.length; i++) {
         const r = rows[i] || []; if (!str(r[0])) continue;
@@ -110,41 +110,50 @@
   /* entries -> planning cases per SKU and month. Rules, all from the packet:
    *  - local code -> SKU and EA per case from the regional crosswalk
    *  - EA -> CS by dividing by EA per case
-   *  - 'Reorder roll' blank carries the same item and month from the previous cycle; zero cancels */
+   *  - 'Reorder roll' blank carries the same item and month from the previous cycle; zero cancels
+   * Anything the reader cannot use is one issue: { row, key, text }. An issue with a key belongs to
+   * that cell (cell.problem); one without a key is a row the reader could not place at all.
+   * problems = the issues as text, one line each. */
   function resolveSheet(sheet, region, cycle, prev, ref) {
     const xw = new Map(ref.crosswalk.filter(c => c.region === region).map(c => [c.local, c]));
-    const cells = {}, problems = [...sheet.bad];
+    const rname = (ref.regions.find(r => r.code === region) || {}).name || region;
+    const cells = {}, issues = [];
     for (const en of sheet.entries) {
       const x = xw.get(en.local);
-      if (!x) { problems.push(`Row ${en.row}: local code ${en.local} is not in the ${region} crosswalk`); continue; }
-      if (!en.month) { problems.push(`Row ${en.row}: month heading not recognised`); continue; }
+      if (!x) { issues.push({ row: en.row, key: null, text: `Item code ${en.local} is not on ${rname}'s list` }); continue; }
+      if (!en.month) { issues.push({ row: en.row, key: null, text: "Month heading not recognised" }); continue; }
       const sku = x.sku, key = `${region}|${sku}|${en.month}`;
-      const cell = { sku, month: en.month, local: en.local, unit: en.unit, orig: en.qty, row: en.row, note: en.note, rule: [] };
+      const ea = ((ref.items.find(i => i.sku === sku) || {}).ea_unit || "each").toLowerCase();
+      const cell = { sku, month: en.month, local: en.local, unit: en.unit, orig: en.qty, raw: en.raw || null, row: en.row, note: en.note, rule: [] };
       if (en.qty == null) {
         const p = prev && prev[key];
-        if (sheet.layout === "Reorder roll" && p) {
-          cell.cs = p.cs; cell.rule.push(`blank: carried from ${p.cycle} cycle`); cell.carried_from = p.cycle;
-        } else { cell.cs = null; problems.push(`Row ${en.row}: ${sku} ${en.month} is blank with nothing to carry`); }
+        if (en.raw != null) { cell.cs = null; cell.problem = `“${en.raw}” is not a number`; }
+        else if (sheet.layout === "Reorder roll" && p) {
+          cell.cs = p.cs; cell.rule.push(`blank: carried from the ${p.cycle} sheet`); cell.carried_from = p.cycle;
+        } else { cell.cs = null; cell.problem = "Blank, and nothing earlier to carry"; }
       } else {
         let cs;
         if (en.unit === "EA") {
           cs = en.qty / x.ea_per_case;
-          cell.rule.push(`${en.qty} EA / ${x.ea_per_case} per case`);
-          if (Math.abs(cs - Math.round(cs)) > 1e-9) problems.push(`Row ${en.row}: ${sku} ${en.month} ${en.qty} EA is not a whole number of cases (${cs.toFixed(2)})`);
+          cell.rule.push(`${en.qty} ${ea}s ÷ ${x.ea_per_case} a case`);
+          if (Math.abs(cs - Math.round(cs)) > 1e-9) cell.problem = `${en.qty} ${ea}s is ${cs.toFixed(1)} cases, not a whole case`;
         } else if (en.unit === "CS") cs = en.qty;
-        else { cs = null; problems.push(`Row ${en.row}: unknown unit “${en.unit}”`); }
+        else { cs = null; cell.problem = `Unit “${en.unit}” not known`; }
         if (cs === 0) cell.rule.push("zero: month cancelled");
         cell.cs = cs;
       }
+      if (cell.problem) issues.push({ row: en.row, key, text: cell.problem });
       cell.cycle = cycle;
       cells[key] = cell;
     }
     const cv = Object.values(cells);
     return {
-      cells, problems,
+      cells, issues, problems: issueText(issues),
       counts: { cells: cv.length, ea: cv.filter(c => c.unit === "EA" && c.orig != null).length, carried: cv.filter(c => c.carried_from).length, cancelled: cv.filter(c => c.cs === 0).length },
     };
   }
+
+  const issueText = issues => issues.map(i => `Row ${i.row}: ${i.text}`);
 
   /* ---------------------------------------------------------------- emails */
   function decodeWords(s) {
@@ -281,11 +290,13 @@
         if (e.sheet !== x.id || e.cs == null || e.cs === "") continue;
         const [, sku, month] = e.key.split("|");
         const cell = res.cells[e.key] || (res.cells[e.key] = { sku, month, local: null, unit: "CS", orig: null, row: null, note: "", rule: [], cycle: x.cycle });
-        cell.edited = { was: cell.cs == null ? null : cell.cs, date: e.date, reason: e.reason || "", id: e.id };
+        cell.edited = { was: cell.cs == null ? (cell.raw != null ? `“${cell.raw}”` : null) : cell.cs, problem: cell.problem || null, date: e.date, reason: e.reason || "", id: e.id };
         cell.cs = +e.cs;
-        cell.rule.push(`edited by head manager: was ${cell.edited.was == null ? "blank" : Math.round(cell.edited.was * 10) / 10}`);
-        res.problems = res.problems.filter(p => !p.includes(`${sku} ${month} `));
+        delete cell.problem;
+        cell.rule.push(`changed by the head manager: was ${cell.edited.was == null ? "blank" : typeof cell.edited.was === "string" ? cell.edited.was : Math.round(cell.edited.was * 10) / 10}`);
+        res.issues = res.issues.filter(i => i.key !== e.key);
       }
+      res.problems = issueText(res.issues);
       res.counts.edited = Object.values(res.cells).filter(c => c.edited).length;
       Object.assign(x, res, { layout: read.layout, author: read.author, hub: read.hub || (D.regions.find(r => r.code === x.region) || {}).hub, dated: read.dated });
       x.replaces = lastOf[x.region + "|" + x.cycle] ? lastOf[x.region + "|" + x.cycle].id : null;
@@ -499,7 +510,7 @@
       const now = shopsIn(r, m), then = shopsIn(r, addM(m, -12));
       if (!now || !then) return null;
       const v = avg * now / then, span = mRange(months[0], months[months.length - 1]);
-      return { v, label: `ships ~${r0(v)}/mo`, method: `${span} avg × shops ${now}/${then}`, detail: `${seasonal ? "Seasonal item, same month last year" : "Same three months last year"} (${span}): ${fmt(avg)} CS a month shipped, × ${now}/${then} open shops = ${fmt(v)} CS.` };
+      return { v, label: `ships ~${r0(v)}/mo`, method: `${span} avg × shops ${now}/${then}`, detail: `${seasonal ? "Seasonal item, same month last year" : "Same three months last year"} (${span}): ${fmt(avg)} cases a month shipped, × ${now}/${then} open shops = ${fmt(v)} cases.` };
     }
     /* expected cases from sales of the one drink with a portion standard (S001, S005, S014) */
     function expectSales(T, key) {
@@ -515,7 +526,7 @@
       if (!sUse || !g0 || months.some(x => !(x in use) || x > lc)) return null;
       const base = months.reduce((a, x) => a + use[x], 0) / months.length, k = sShip / sUse, g = g1 / g0, v = base * g * k;
       const drink = SALES_DRINK[sku] || "one drink";
-      return { v, label: `sales ~${r0(v)}/mo`, method: `${drink} sales ${pct(g - 1)} YoY`, detail: `${drink}, sold + comped, ${mRange(months[0], months[months.length - 1])}: ${fmt(base)} CS a month of this item. Sales ${pct(g - 1)} on a year ago (${mRange(rec[2], rec[0])}). × ${fmt(k)} cases shipped per sales-implied case (last 12 months) = ${fmt(v)} CS.` };
+      return { v, label: `sales ~${r0(v)}/mo`, method: `${drink} sales ${pct(g - 1)} YoY`, detail: `${drink}, sold + comped, ${mRange(months[0], months[months.length - 1])}: ${fmt(base)} cases a month of this item. Sales ${pct(g - 1)} on a year ago (${mRange(rec[2], rec[0])}). × ${fmt(k)} cases shipped per sales-implied case (last 12 months) = ${fmt(v)} cases.` };
     }
 
     /* checks on a number for one line, as of T. last = the plan in force before this cycle */
@@ -532,7 +543,7 @@
       judge("sales", "Sales", expectSales(T, key));
       if (last != null) {
         const d = value - last, ok = !(Math.abs(d) >= OPT.swingMin && Math.abs(d) > OPT.swingTol * Math.max(last, 1));
-        out.push({ id: "swing", name: "Last plan", expected: last, d: r0(d), ok, label: `was ${fmt(last)}`, method: "change on last plan", detail: `Plan in force before this cycle: ${fmt(last)} CS. Flags beyond ±${Math.round(OPT.swingTol * 100)}% and ${OPT.swingMin} CS.` });
+        out.push({ id: "swing", name: "Last plan", expected: last, d: r0(d), ok, label: `was ${fmt(last)}`, method: "change on last plan", detail: `Plan in force before this cycle: ${fmt(last)} cases. Flags beyond ±${Math.round(OPT.swingTol * 100)}% and ${OPT.swingMin} CS.` });
       }
       return out;
     }
@@ -579,7 +590,8 @@
           const row = pin && pin.grid[r.code + "|" + sku], last = row && row[m] != null ? row[m] : null;
           const kn = known.filter(k => k.region === r.code && k.sku === sku && k.month === m);
           const ln = { key, region: r.code, sku, month: m, asked: c.cs, last, cell: c, sheet: s.id, src: s.src, synthetic: !!s.synthetic, known: kn, gap: 0 };
-          if (c.cs == null) { ln.status = "problem"; ln.reason = "Blank, nothing to carry"; ln.checks = []; }
+          // a cell the reader could not use is one line to check, whatever its numbers say
+          if (c.problem || c.cs == null) { ln.status = "problem"; ln.reason = c.problem || "Blank"; ln.checks = c.cs == null ? [] : lineChecks(T, key, c.cs, last, kn); }
           else {
             ln.checks = lineChecks(T, key, c.cs, last, kn);
             ln.status = verdict(ln.checks) ? "needs" : "accepted";
@@ -597,13 +609,20 @@
           if (!dec) { const old = decisionAt(T, "line:" + s.id + "|" + key); if (old) dec = { ...old, outcome: old.outcome === "keep" ? "keep" : old.outcome }; }
           if (!dec) { const e = record.edits.filter(e => e.src === s.id && e.key === key && editLive(e, T)).pop(); if (e) dec = { id: e.id, date: e.date, target: "edit", outcome: "request", note: e.reason }; }
           if (dec) ln.decision = dec;
-          ln.value = !dec ? (ln.asked == null ? null : ln.asked + extra) : dec.outcome === "keep" ? last : dec.outcome === "set" ? +dec.value : (ln.asked == null ? null : ln.asked + extra);
-          ln.settled = ln.status === "accepted" || (!!dec && dec.outcome !== "question");
+          // no usable number: the last plan stands until the head manager decides
+          const asIs = ln.asked == null ? last : ln.asked + extra;
+          ln.value = !dec ? asIs : dec.outcome === "keep" ? last : dec.outcome === "set" ? +dec.value : asIs;
+          ln.settled = ln.status === "accepted" || (!!dec && dec.outcome !== "question" && !(dec.outcome === "request" && ln.asked == null));
           lines.push(ln);
+        }
+        // rows the reader could not place (unknown item code, unreadable month): one line each to check
+        for (const i of (s.issues || []).filter(i => !i.key)) {
+          const key = `row:${s.id}#${i.row}`, dec = decisionAt(T, "draft:" + cycle + "|" + key);
+          lines.push({ key, region: r.code, sku: null, month: null, row: i.row, asked: null, last: null, value: null, sheet: s.id, src: s.src, synthetic: !!s.synthetic, known: [], gap: 0, checks: [], status: "problem", reason: i.text, ...(dec ? { decision: dec } : {}), settled: !!dec && dec.outcome !== "question" });
         }
       }
       const n = s => lines.filter(l => l.status === s).length, got = Object.values(regions).filter(Boolean);
-      const counts = { sheets: got.length, lines: lines.length - n("nosheet"), accepted: n("accepted"), needs: n("needs"), problems: n("problem"), nosheet: n("nosheet"), unsettled: lines.filter(l => !l.settled).length, questions: lines.filter(l => l.decision && l.decision.outcome === "question").length };
+      const counts = { sheets: got.length, lines: lines.filter(l => l.sku).length - n("nosheet"), accepted: n("accepted"), needs: n("needs"), problems: n("problem"), nosheet: n("nosheet"), unsettled: lines.filter(l => !l.settled).length, questions: lines.filter(l => l.decision && l.decision.outcome === "question").length };
       return {
         cycle, asOf: T, months, lastPlan: pin ? { id: pin.id, name: pin.name, date: pin.date } : null, regions, lines, counts,
         synthetic: got.some(x => x.synthetic),
@@ -620,12 +639,15 @@
       const d = draft(T, cycle); if (!d) return { lines: [], total: null, sheets: 0 };
       const L = d.lines.filter(l => l.status === "needs" || l.status === "problem").sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).map(l => {
         const sh = l.checks.find(c => c.id === "ship"), sa = l.checks.find(c => c.id === "sales");
-        return { key: l.key, region: l.region, sku: l.sku, month: l.month, last: l.last, ask: l.asked, expected: sh ? sh.expected : sa ? sa.expected : null, sales: sa ? sa.expected : null,
+        return { key: l.key, region: l.region, sku: l.sku, month: l.month, row: l.row || (l.cell && l.cell.row) || null, raw: (l.cell && l.cell.raw) || null, last: l.last, ask: l.asked, expected: sh ? sh.expected : sa ? sa.expected : null, sales: sa ? sa.expected : null,
           why: l.reason, detail: l.checks.map(c => `${c.name}: ${c.detail}`).join(" · "), method: l.checks.filter(c => !c.ok).map(c => c.method).join("; "),
           sheet: l.sheet, note: l.note || (l.cell && l.cell.rule.join("; ")) || "", status: l.status, decision: l.decision || null, settled: l.settled, value: l.value, synthetic: l.synthetic, checks: l.checks };
       });
+      // the one count of what needs the head manager: unsettled lines, in total and per region.
+      // Every screen that says "to check" reads these numbers, and Review lists exactly these lines.
+      const openBy = {}; for (const l of L) if (!l.settled) openBy[l.region] = (openBy[l.region] || 0) + 1;
       const touched = d.lines.filter(l => l.touched).map(l => ({ key: l.key, region: l.region, sku: l.sku, month: l.month, last: l.last, ask: l.asked, value: l.value, why: l.note, carried: l.carried, status: l.status }));
-      return { lines: L, touched, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
+      return { lines: L, open: L.filter(l => !l.settled).length, openBy, touched, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
     }
     /* the same flags grouped by region × item: one decision often covers several months */
     function flagGroups(T, cycle) {
@@ -642,7 +664,7 @@
       return {
         date: T, cycle: d.cycle, name: (opts && opts.name) || `${MON[+d.cycle.slice(5) - 1]} plan`, note: (opts && opts.note) || "", grid, months: d.months,
         from: d.lastPlan && d.lastPlan.id, synthetic: d.synthetic, preflight: pre, carried: d.lines.flatMap(l => (l.carried || []).map(c => c.id)),
-        preflightText: [pre.unsettled && `${pre.unsettled} flag${pre.unsettled > 1 ? "s" : ""} unsettled`, pre.questions && `${pre.questions} open question${pre.questions > 1 ? "s" : ""}`, pre.missing.length && `${pre.missing.length} sheet${pre.missing.length > 1 ? "s" : ""} missing`].filter(Boolean).join(", ") || "All settled",
+        preflightText: [pre.unsettled && `${pre.unsettled} not checked`, pre.questions && `${pre.questions} open question${pre.questions > 1 ? "s" : ""}`, pre.missing.length && `${pre.missing.length} sheet${pre.missing.length > 1 ? "s" : ""} missing`].filter(Boolean).join(", ") || "All settled",
       };
     }
 
@@ -654,8 +676,8 @@
     const chLive = (c, T) => c.date <= T && !(c.removed_on && c.removed_on <= T);
     function toCases(c) {
       const [r, sku] = c.key.split("|"), q = +c.qty || 0;
-      if (String(c.unit || "CS").toUpperCase() === "EA") { const e = epc(r, sku), cs = q / e; return { cs, arith: `${fmt(q)} ${(ITEMS[sku].ea_unit || "EA").toLowerCase()}s ÷ ${e} = ${fmt(cs)} CS` }; }
-      return { cs: q, arith: `${fmt(q)} CS` };
+      if (String(c.unit || "CS").toUpperCase() === "EA") { const e = epc(r, sku), cs = q / e; return { cs, arith: `${fmt(q)} ${(ITEMS[sku].ea_unit || "EA").toLowerCase()}s ÷ ${e} = ${fmt(cs)} cases` }; }
+      return { cs: q, arith: `${fmt(q)} cases` };
     }
     function changesAt(T, base) {
       base = base || baseAt(T);
@@ -694,7 +716,7 @@
           if (c.replacesId) at(c.key, cs, c, `${arith}, replaces ${toCases(all.find(x => x.id === c.replacesId)).arith}`);
           else if (cur != null) at(c.key, cs - cur, c, `set to ${arith}, was ${fmt(cur)}`);
         } else if (c.type === "move") {
-          const t = `${fmt(cs)} CS ${mShort(m)} → ${mShort(c.to)}`;
+          const t = `${fmt(cs)} cases ${mShort(m)} → ${mShort(c.to)}`;
           at(c.key, -cs, c, t); at(`${r}|${sku}|${c.to}`, cs, c, t);
         } else if (c.type === "scenario") {
           scenarios.push({ id: c.id, ref: c.ref, key: c.key, date: c.date, earlier: !!c.carriedOver, released: (base.grid[r + "|" + sku] || {})[m], would: cur == null ? null : cur + cs, d: cs, text: `${cs >= 0 ? "+" : ""}${arith}`, reason: c.reason || "", source: c.source || null });
@@ -713,7 +735,7 @@
 
     /* ---------------------------------------------------------------- answer key */
     const KNOWN_GAPS = {
-      "R02|S005|2026-09": "Both net the 96 CS pulled to Aug (HD-PULL-01)",
+      "R02|S005|2026-09": "Both net the 96 cases pulled to Aug (HD-PULL-01)",
       "R06|S001|2026-09": "Asked 399, posted 412; not in the records",
     };
     /* the planner's version for a cycle against Dutch Bros' posted file for the same cycle */
@@ -762,7 +784,7 @@
       const w = working(T);
       const rows = w.diff.map(x => ({ region: regionName(x.region), sku: x.sku, item: ITEMS[x.sku].name, month: x.month, released: x.released, proposed: x.proposed, d: x.d, type: x.type, ref: x.ref, reason: x.reason, how: x.text, source: x.source }));
       const esc = v => /[",\n]/.test(String(v == null ? "" : v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v == null ? "" : v);
-      const head = ["Region", "SKU", "Item", "Month", "Released CS", "Proposed CS", "Difference", "Type", "Ref", "Reason", "How"];
+      const head = ["Region", "SKU", "Item", "Month", "Released cases", "Proposed cases", "Difference", "Type", "Ref", "Reason", "How"];
       const lines = [head.join(",")].concat(rows.map(x => [x.region, x.sku, x.item, x.month, x.released, x.proposed, x.d, x.type, x.ref, x.reason, x.how].map(esc).join(",")));
       for (const h of w.holds) lines.push(["", "", "", "", "", "", "", "open question", h.ref, h.text, ""].map(esc).join(","));
       for (const s of w.scenarios) { const [r, sku, m] = s.key.split("|"); lines.push([regionName(r), sku, ITEMS[sku].name, m, s.released, s.would, s.d, "scenario (not in plan)", s.ref, s.reason, s.text].map(esc).join(",")); }
