@@ -42,8 +42,8 @@ synthetic month through the same screens.
    every check are accepted from the request automatically and say so. The
    planner sees only lines that fail a check, have a reading problem, or are
    touched by late news.
-3. **Every flag says why in one sentence**, with the numbers: "Asks 420; ships
-   about 310 a month (Sep–Nov last year, scaled for 2 new shops)".
+3. **Every flag says why in a short phrase**, with the numbers: "Asks 420; ships
+   about 310 a month". The method is on click.
 4. **Late news is a typed change**, never a bare ±: *add*, *set total* (replaces
    an earlier change), *move* to another month, *hold* (open question, no
    numbers), *scenario* (never enters the plan). Quantity in the unit the
@@ -100,7 +100,7 @@ Owned by the engine worker. Names are suggestions; the report says what landed.
 - **Draft for a cycle as of a date**: per region × item × month, the requested
   cases with provenance, built from the latest accepted sheet per region.
 - **Checks per line**: expected from shipments, sales-implied, swing against
-  last plan; each with the number, the method in one sentence, pass or fail.
+  last plan; each with the number, a short method label, pass or fail.
 - **Needs**: the lines that fail, ranked, with a one-sentence reason.
 - **Changes**: the typed changes above, applied to a published version, giving
   the working plan and the diff since release with reasons.
