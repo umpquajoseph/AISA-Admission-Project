@@ -30,6 +30,10 @@ synthetic month through the same screens.
 
 ## 3. Rules the whole app follows
 
+0. **UI/UX first; little text.** Every screen must work at a glance: numbers,
+   colour and position carry the meaning, not paragraphs. No explanatory hints
+   under headings. A reason is a short phrase ("ships ~310/mo"), with detail on
+   click or hover. If a screen needs a paragraph to explain itself, redesign it.
 1. **The plan the planner publishes is the plan in force.** Dutch Bros' own plan
    files never take over. July and August posts load as past versions so
    history is not empty. Dutch Bros' September files are the answer key: shown
