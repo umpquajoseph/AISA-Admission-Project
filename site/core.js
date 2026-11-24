@@ -856,25 +856,26 @@
       // 1. journal entries
       for (const j of PO.journal.filter(j => j.at.slice(0, 10) <= T)) {
         const day = j.at.slice(0, 10), l = lines.find(x => x.id === `${j.po}/${j.line}`); if (!l) continue;
-        const base = { id: "po:" + j.no, kind: "short", date: day, sku: l.sku, month: l.month, region: null, synthetic: !!j.synthetic, quote: j.comment, source: `Supplier: ${l.supplier}` };
+        // the buyer brings these: the orders are pooled at Central Intake, so no region has been shorted yet
+        const base = { id: "po:" + j.no, kind: "short", date: day, sku: l.sku, month: l.month, region: null, synthetic: !!j.synthetic, quote: j.comment, from: "Supply purchasing", source: `Change ${j.no}` };
         if (j.type === "Cancel balance") {
           const kept = csOf(j.new), cut = csOf(j.old) - kept;
           items.push({ ...base, lines: [l], need: cut, title: `${name(l.sku)}: supplier cut ${fmt(cut)} cases from an order due ${dl(l.due0)}`,
-            text: `We ordered ${fmt(csOf(j.old))} cases on ${j.po}; the supplier ${l.received >= kept ? "sent" : "will send"} only ${fmt(kept)}. Order ${fmt(cut)} more to cover the gap, or change the plan.`,
+            text: `${l.supplier} ${l.received >= kept ? "sent" : "will send"} only ${fmt(kept)} of the ${fmt(csOf(j.old))} cases we ordered on ${j.po}. Should I order ${fmt(cut)} more?`,
             prefill: { action: "more", qty: cut, by: [l.due0, addD(T, lead(l.sku))].sort().pop(), po: "" }, change: changeInit(l.sku, l.month, { qty: -cut }) });
         } else if (j.type === "Balance ETA") {
           const was = etaOf(j.old, l.due0), now = etaOf(j.new, l.due0), then = poAt(day).find(x => x.id === l.id), open = then ? then.open : l.open;
           const slip = was && now ? Math.round((new Date(now) - new Date(was)) / 864e5) : null;
           items.push({ ...base, lines: [l], need: open, title: `${name(l.sku)}: ${fmt(open)} cases now due ${dl(now)}, not ${dl(was)}`,
-            text: `The rest of ${j.po} now arrives ${slip != null ? `${slip} day${slip === 1 ? "" : "s"} ` : ""}later than planned. Rush it, or change the plan.`,
+            text: `The rest of ${j.po} now arrives ${slip != null ? `${slip} day${slip === 1 ? "" : "s"} ` : ""}later than planned. Should I rush it?`,
             done: l.open === 0 ? "received" : null, prefill: { action: "rush", qty: open, by: [was, addD(T, 2)].sort().pop(), po: l.id }, change: changeInit(l.sku, l.month) });
         } else if (j.type === "Void line") {
           const re = (j.comment.match(/PO-\d+\/\d+/) || [])[0], rl = re && lines.find(x => x.id === re);
           const rj = rl && PO.journal.find(x => x.type === "Replacement issued" && `${x.po}/${x.line}` === re && x.at.slice(0, 10) <= T);
-          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `Supplier: ${l.supplier}`,
-            title: `${name(l.sku)}: ${fmt(rl.qty)} cases reissued on ${rl.po}, due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `${j.po}/${j.line} was voided and reissued on ${re}.`,
+          if (rl && rj) items.push({ ...base, id: "po:" + rj.no, date: rj.at.slice(0, 10) > day ? rj.at.slice(0, 10) : day, lines: [l, rl], need: rl.qty, source: `Change ${rj.no}`,
+            title: `${name(l.sku)}: ${fmt(rl.qty)} cases reissued on ${rl.po}, due ${dl(rl.due0)}, not ${dl(l.due0)}`, text: `I voided ${j.po}/${j.line} and reissued it on ${re}.`,
             done: rl.open === 0 ? "received" : null, prefill: { action: "rush", qty: rl.qty, by: [l.due0, addD(T, 2)].sort().pop(), po: rl.id }, change: changeInit(l.sku, l.month) });
-          else items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases voided`, text: `${j.po}/${j.line} was voided with no replacement on the list.`,
+          else items.push({ ...base, lines: [l], need: l.qty, title: `${name(l.sku)}: order for ${fmt(l.qty)} cases voided`, text: `I voided ${j.po}/${j.line} and there is no replacement order. Should I order ${fmt(l.qty)} again?`,
             prefill: { action: "more", qty: l.qty, by: [l.due0, addD(T, lead(l.sku))].sort().pop(), po: "" }, change: changeInit(l.sku, l.month) });
         }
       }
@@ -918,14 +919,15 @@
             const id = "late:" + a.sku + "@" + a.month, more = askedOf(id, T).filter(o => o.action !== "cut").reduce((t, o) => t + o.qty, 0);
             const ups = a.parts.filter(p => p.d > 0), reg = ups.slice().sort((x, y) => y.d - x.d)[0].region;
             const whys = [...new Set(ups.map(p => p.reason).filter(Boolean))].join("; ");
-            const late = Math.round((new Date(addD(T, lead(a.sku))) - new Date(need)) / 864e5), whoFor = ups.length === 1 ? regionName(reg) : ups.map(p => regionName(p.region)).join(", ");
+            // the change sends its order the day it is saved, so lateness is judged from that day, not from today
+            const lands = addD(a.date, lead(a.sku)), late = Math.round((new Date(lands) - new Date(need)) / 864e5), whoFor = ups.length === 1 ? regionName(reg) : ups.map(p => regionName(p.region)).join(", ");
             if (net - more >= 1) autos.push({ id: "auto:" + id, item: id, auto: true, date: a.date, action: "more", sku: a.sku, month: a.month, po: "",
               qty: Math.round((net - more) * 100) / 100, by: need, reason: `For ${whoFor}${whys ? `: ${whys}` : ""}`, title: "From a plan change" });
-            if (by >= T) continue;
+            if (by >= a.date) continue;
             items.push({ id, kind: "late", date: a.date, sku: a.sku, month: a.month, region: reg, lines: [], need: net, synthetic: false, orderBy: by,
               title: `${name(a.sku)}: ${fmt(net)} more cases for ${dl(need)} won't arrive in time`,
-              text: `They're on purchasing's list, but a normal order placed today arrives ${dl(addD(T, lead(a.sku)))}, ${late} day${late === 1 ? "" : "s"} late. Rush them, or change the plan.`,
-              source: `For ${whoFor}${whys ? `: ${whys}` : ""}`,
+              text: `A normal order sent ${dl(a.date)} lands ${dl(lands)}, ${late} day${late === 1 ? "" : "s"} late. Should I rush it?`,
+              from: "Supply purchasing", source: `For ${whoFor}${whys ? `: ${whys}` : ""}`,
               // already asked for more than the plan now adds: offer to cut the difference
               prefill: { action: "rush", qty: Math.max(0, net - more), by: need, po: "" }, change: changeInit(a.sku, a.month, { region: reg }) });
           }
@@ -937,9 +939,11 @@
         const cs = ea ? q.qty / epc(q.by, q.item) : q.qty, by = addD(q.need, -lead(q.item));
         const key = `${q.by}|${q.item}|${m}`, inPlan = (w.grid[q.by + "|" + q.item] || {})[m], ch = w.applied[key] || [];
         items.push({ id: "rq:" + q.id, kind: "request", date: q.at.slice(0, 10), sku: q.item, month: m, region: q.by, synthetic: !!q.synthetic, need: cs, orderBy: by,
-          lines: lines.filter(l => l.sku === q.item && l.open > 0), quote: q.note, source: `Requisition ${q.id}${q.po ? `, on order ${q.po}` : ", not ordered yet"}`,
-          title: `${regionName(q.by)}: ${fmt(q.qty)} ${ea ? unit + "s" : "cases"} of ${name(q.item)} for ${dl(q.need)}`,
-          text: `${ea ? `${fmt(q.qty)} ${unit}s is ${fmt(cs)} cases. ` : ""}In the plan for ${regionName(q.by)}, ${mLong(m)}: ${inPlan == null ? "no line" : `${fmt(inPlan)} cases`}${ch.length ? `, including ${ch.map(c => `${c.ref || "a change"}, ${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} cases, logged ${dl(c.date)}`).join("; ")}` : ""}. Order-by date ${dl(by)}${by < T ? " has passed" : ""}.`,
+          // the region files the requisition; the buyer holds it in the tray until the planner signs off
+          lines: lines.filter(l => l.sku === q.item && l.open > 0), quote: q.note, from: regionName(q.by), source: `Requisition ${q.id}${q.po ? `, on order ${q.po}` : ""}`,
+          title: `${fmt(cs)} cases of ${name(q.item)} for ${dl(q.need)}`,
+          text: `We need ${fmt(cs)} cases of ${name(q.item)} by ${dl(q.need)}.`,
+          desk: `${ch.length ? `Already in the plan: ${ch.map(c => `${c.ref || "a change"}, ${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} cases, ${dl(c.date)}`).join("; ")}.` : inPlan == null ? "Not in the plan yet." : `${mLong(m)} plan for ${regionName(q.by)}: ${fmt(inPlan)} cases.`}${by < T ? " A normal order is too late now." : ""}`,
           prefill: { action: by < T ? "rush" : "more", qty: cs, by: q.need, po: "" }, change: { type: "add", region: q.by, sku: q.item, month: months.includes(m) ? m : months[0], qty: ea ? q.qty : cs, unit: ea ? "EA" : "CS", reason: `${q.id}: ${q.scope}` } });
       }
       for (const it of items) {

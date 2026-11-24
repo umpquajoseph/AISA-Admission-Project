@@ -536,7 +536,7 @@ function buyRow(it) {
   return `<div class="mrow ${open ? "open" : ""}">
     <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${it.kind}">${PKIND[it.kind]}</span><b>${esc(it.title)}</b><span class="reg">${esc(it.region ? regName(it.region) : "All regions")}</span><span class="hint">${dlabel(it.date)}</span><span class="chev">${open ? "▾" : "▸"}</span></div>
     ${open ? `<div class="mbody">
-      <div class="msg">${it.source || it.synthetic ? `<div class="hint">${esc([it.source, it.synthetic && "made up for rehearsal"].filter(Boolean).join(" · "))}</div>` : ""}<div>${esc(it.text)}</div>${it.quote ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}</div>
+      <div class="msg"><div class="hint">${esc([it.from && `From ${it.from}`, it.source, it.synthetic && "made up for rehearsal"].filter(Boolean).join(" · "))}</div><div>${esc(it.text)}</div>${it.quote && it.kind === "request" ? `<div class="quote">“${esc(it.quote)}”</div>` : ""}${it.desk ? `<div class="hint">${esc(it.desk)}</div>` : ""}</div>
       ${it.asked.length ? `<div style="margin-top:4px">Already asked: ${it.asked.map(o => `${actWord(o.action)} ${fmt(o.qty)} cases by ${dlabel(o.by)} (${dlabel(o.date)})`).join("; ")}</div>` : ""}
       <div class="acts"><button class="btn small primary" data-ask="${esc(id)}">${it.prefill.action === "more" && it.kind === "short" ? `Order ${fmt(it.prefill.qty)} more` : it.prefill.action === "rush" ? `Rush ${fmt(it.prefill.qty)} cases` : "Ask purchasing"}</button><button class="btn small" data-buyplan="${esc(id)}">Change the plan</button><button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button></div>
       ${S.ask && S.ask.item === id ? askFormHtml(S.ask, it) : ""}
@@ -951,7 +951,7 @@ function logEntries(T) {
     out.push({ date: c.date, kind: "you", text: `You ${what}.${c.source ? ` From: ${esc(srcName(c.source))}.` : ""}${c.key ? ` <a data-goto="plan:${c.key}">Open</a>` : ""}`, why: c.reason });
     if (c.removed_on && c.removed_on <= T) out.push({ date: c.removed_on, kind: "you", text: `You undid a ${dlabel(c.date)} change (${esc(c.reason)}).` });
   }
-  for (const it of desk.purchaseNews(T).filter(i => i.kind === "short" || i.kind === "request")) out.push({ date: it.date, kind: "msg", text: `Purchasing: <b>${esc(it.title)}</b>`, why: [it.source, it.quote].filter(Boolean).join(" · ") });
+  for (const it of desk.purchaseNews(T).filter(i => i.kind === "short" || i.kind === "request")) out.push({ date: it.date, kind: "msg", text: `${esc(it.from || "Purchasing")}: <b>${esc(it.title)}</b>`, why: [it.source, it.quote].filter(Boolean).join(" · ") });
   for (const o of (R.orders || []).filter(o => o.date <= T)) {
     out.push({ date: o.date, kind: "you", text: `You asked purchasing to ${actWord(o.action)} <b>${fmt(o.qty)} cases</b> of ${esc(itemName(o.sku))}${o.po ? ` on ${esc(o.po)}` : ""} by ${dlabel(o.by)}. From: ${esc(o.title)}.`, why: o.reason !== o.title ? o.reason : "" });
     if (o.removed_on && o.removed_on <= T) out.push({ date: o.removed_on, kind: "you", text: `You took back a ${dlabel(o.date)} ask of purchasing (${actWord(o.action)} ${fmt(o.qty)} cases of ${esc(itemName(o.sku))}).` });
@@ -1167,8 +1167,10 @@ function workedExample() {
   for (const [sku, q] of [["S001", 24], ["S005", 18], ["S014", 12]]) ch("2026-09-16", "move", "OP-FR-02", `R04|${sku}|2026-10`, q, "CS", "Opening kit moved to Nov 2", kit, { to: "2026-11" });
   ch("2026-09-17", "set", "GC-PROMO-01", "R06|S014|2026-10", 480, "EA", "Promo cut to 480 bottles", mango);
   for (const [date, target] of [["2026-09-16", "cal:OP-FR-02"], ["2026-09-16", kit], ["2026-09-17", "cal:GC-PROMO-01"], ["2026-09-17", mango]]) rec.decisions.push({ id: uid("d"), date, target, outcome: "no-change", note: "Logged as a change" });
-  rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter trial: no sites or quantities yet" });
-  for (const it of C.Desk(D, rec).purchaseNews("2026-09-18")) if (it.open && it.kind !== "request") rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: it.id, outcome: "no-change", note: "Handled in September" });
+  // September ends settled, so the October demo starts on a clean slate
+  rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "no-change", note: "Menu ops: keep the holiday order as is until a trial list is released" });
+  rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "rq:RQ-0917-7", outcome: "no-change", note: "Signed off: GC-PROMO-01 is in the plan and its order went to purchasing Sep 17" });
+  for (const it of C.Desk(D, rec).purchaseNews("2026-09-18")) if (it.open) rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: it.id, outcome: "no-change", note: "Handled in September" });
   const done = new Set(rec.decisions.map(d => d.target));
   for (const t of C.Desk(D, rec).threadsAt("2026-09-18")) if (!done.has(t.id)) rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: t.id, outcome: "no-change", note: "Handled in September" });
   return rec;
