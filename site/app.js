@@ -11,19 +11,20 @@ const START = D.releases.filter(r => r.disposition === "Posted").map(r => r.logg
 const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
 const REGIONS = Object.fromEntries(D.regions.map(r => [r.code, r]));
 const CATS = [...new Set(D.items.map(i => i.category))];
-const TABS = [["inbox", "Inbox"], ["plan", "Plan"], ["history", "History"], ["ask", "Ask"]];
+const TABS = [["inbox", "Inbox"], ["review", "Review"], ["plan", "Plan"], ["release", "Release"], ["history", "History"], ["ask", "Ask"]];
 
 /* ------------------------------------------------------------ storage */
 const KEY = "supplydesk.v2.";
 function load(k, d) { try { const v = localStorage.getItem(KEY + k); return v ? JSON.parse(v) : d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch (e) { alert("This browser would not save the desk record: " + e.message); } }
 const emptyRecord = () => ({ inputs: [], edits: [], decisions: [], versions: [] });
+const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 let R = load("record", emptyRecord());
 let desk = C.Desk(D, R);
 function commit() { save("record", R); desk = C.Desk(D, R); render(); }
 
 const S = {
-  tab: load("tab", "inbox"), date: load("date", END), zoom: load("zoom", "month"),
+  tab: load("tab", "inbox"), date: load("date", null), zoom: load("zoom", "month"),
   planMonth: null, sel: null, working: null, open: {}, hist: "log", histKind: "all",
   trend: { sku: "S014", region: "R06" }, diffA: null, diffB: null, sheetView: null, preview: null, publishing: false, pending: null, folder: null,
 };
@@ -31,6 +32,7 @@ const S = {
   const q = new URLSearchParams(location.search);
   if (q.get("tab")) S.tab = q.get("tab");
   if (q.get("date") >= START && q.get("date") <= END) S.date = q.get("date");
+  if (!S.date) S.date = desk.sheets.filter(s => s.cycle === "2026-09").map(s => s.date).sort()[0] || END;
   if (q.get("example") === "1" && !R.edits.length && !R.decisions.length) { R = workedExample(); save("record", R); desk = C.Desk(D, R); }
 })();
 
@@ -46,72 +48,42 @@ const dlong = d => new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { week
 const addDays = (d, n) => { const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 const itemName = sku => ITEMS[sku] ? ITEMS[sku].name : sku;
 const regName = r => REGIONS[r] ? REGIONS[r].name : (r || "Network");
-const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const short = f => String(f || "").split("/").pop();
 const who = x => x.kind === "email" ? x.mail.sender.replace(/<.*>/, "").replace(/"/g, "").trim() : x.kind === "calendar" ? "Event calendar" : x.kind === "sheet" ? (x.author || regName(x.region)) : "Central planning";
 const nextMonth = d => { const [y, m] = d.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; };
 
-/* ------------------------------------------------------------ the clock */
+/* ------------------------------------------------------------ the clock: one "Today" in the header */
 const ALLDAYS = (() => { const a = []; for (let d = START; d <= END; d = addDays(d, 1)) a.push(d); return a; })();
 const ARRIVALS = {};                                      // date -> inputs that arrived that day
 function indexArrivals() { for (const k in ARRIVALS) delete ARRIVALS[k]; for (const x of desk.inputs) if (x.date >= START && x.date <= END) (ARRIVALS[x.date] = ARRIVALS[x.date] || []).push(x); }
-function sliderDays() { return S.zoom === "all" ? ALLDAYS : ALLDAYS.filter(d => d.slice(0, 7) === S.date.slice(0, 7)); }
 function dayText(d) {
-  const a = ARRIVALS[d] || []; if (!a.length) return "Nothing arrived";
+  const a = ARRIVALS[d] || []; if (!a.length) return "";
   const n = k => a.filter(x => x.kind === k).length, parts = [];
   const sh = a.filter(x => x.kind === "sheet"); if (sh.length) parts.push(sh.length === 1 ? `${regName(sh[0].region)} sheet` : `${sh.length} sheets`);
-  const pl = a.filter(x => x.kind === "plan"); for (const p of pl) parts.push(`plan ${p.release.disposition.toLowerCase()}`);
-  if (n("email")) parts.push(`${n("email")} email${n("email") > 1 ? "s" : ""}`);
-  if (n("calendar")) parts.push(`${n("calendar")} calendar entr${n("calendar") > 1 ? "ies" : "y"}`);
-  return parts.join(" · ");
+  const m = n("email") + n("calendar"); if (m) parts.push(`${m} message${m > 1 ? "s" : ""}`);
+  return parts.join(", ");
 }
+const cycles = () => [...new Set(desk.sheets.map(s => s.cycle))].sort().filter(c => c >= "2026-09");
+const cycleStart = c => desk.sheets.filter(s => s.cycle === c).map(s => s.date).sort()[0];
+const isSynthetic = c => desk.sheets.some(s => s.cycle === c && s.synthetic);
 function renderClock() {
-  const days = sliderDays(), i = Math.max(0, days.indexOf(S.date));
-  const pos = d => (days.length > 1 ? days.indexOf(d) / (days.length - 1) * 100 : 50) + "%";
-  const marks = days.filter(d => ARRIVALS[d]).map(d => {
-    const k = ARRIVALS[d].some(x => x.kind === "plan") ? "plan" : ARRIVALS[d].some(x => x.kind === "sheet") ? "sheet" : "msg";
-    return `<span class="mark ${k}" style="left:${pos(d)}" title="${esc(dlabel(d) + ": " + dayText(d))}"></span>`;
-  }).join("");
-  const ticks = S.zoom === "all"
-    ? days.filter(d => d.endsWith("-01") || d === days[0]).map(d => `<span class="tick" style="left:${pos(d)}"><i></i>${MON[+d.slice(5, 7) - 1]}</span>`)
-    : days.filter((d, j) => j % 2 === 0 || days.length < 20).map(d => `<span class="tick" style="left:${pos(d)}"><i></i>${+d.slice(8)}</span>`);
-  const months = [...new Set(ALLDAYS.map(d => d.slice(0, 7)))];
+  const days = [...new Set([...Object.keys(ARRIVALS), S.date])].filter(d => d >= "2026-08-15").sort();
+  const cyc = desk.cycleAt(S.date);
   $("clock").innerHTML = `
-    <div class="now"><b id="nowDate"></b><small id="nowText"></small></div>
-    <button class="btn icon" id="prevDay" title="Previous day with an arrival">◀</button>
-    <div class="track">
-      <div class="marks">${marks}</div>
-      <input type="range" id="slider" min="0" max="${days.length - 1}" value="${i}" aria-label="Desk date">
-      <div class="ticks">${ticks.join("")}</div>
-    </div>
-    <button class="btn icon" id="nextDay" title="Next day with an arrival">▶</button>
-    <div class="zoom">
-      <div class="seg"><button class="${S.zoom === "all" ? "on" : ""}" data-zoom="all">All months</button>${months.map(m => `<button class="${S.zoom === "month" && S.date.slice(0, 7) === m ? "on" : ""}" data-zoom="${m}">${MON[+m.slice(5) - 1]}</button>`).join("")}</div>
-    </div>`;
-  updateNow();
-  const sl = $("slider");
-  let raf = 0;
-  sl.oninput = () => { S.date = days[+sl.value]; updateNow(); cancelAnimationFrame(raf); raf = requestAnimationFrame(renderPage); };
-  sl.onchange = () => save("date", S.date);
+    <div class="seg small">${cycles().map(c => `<button class="${cyc === c ? "on" : ""}" data-cycle="${c}">${MON[+c.slice(5) - 1]}${isSynthetic(c) ? " · synthetic" : ""}</button>`).join("")}</div>
+    <button class="btn icon" id="prevDay" title="Previous arrival">◀</button>
+    <select id="daySel" title="Today, for the desk">${days.map(d => `<option value="${d}" ${d === S.date ? "selected" : ""}>${dlong(d).replace(/, 2026$/, "")}${dayText(d) ? " · " + dayText(d) : ""}</option>`).join("")}</select>
+    <button class="btn icon" id="nextDay" title="Next arrival">▶</button>`;
   $("prevDay").onclick = () => jump(-1);
   $("nextDay").onclick = () => jump(1);
-  document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
-    const z = b.dataset.zoom;
-    if (z === "all") S.zoom = "all";
-    else { S.zoom = "month"; if (S.date.slice(0, 7) !== z) S.date = ALLDAYS.filter(d => d.slice(0, 7) === z).pop(); }
-    save("zoom", S.zoom); save("date", S.date); renderClock(); renderPage();
-  });
+  $("daySel").onchange = e => setDate(e.target.value);
+  document.querySelectorAll("[data-cycle]").forEach(b => b.onclick = () => setDate(cycleStart(b.dataset.cycle)));
 }
-function updateNow() {
-  $("nowDate").textContent = dlong(S.date);
-  $("nowText").textContent = dayText(S.date);
-}
+function setDate(d) { S.date = d; save("date", d); renderClock(); renderPage(); }
 function jump(dir) {
   const ds = Object.keys(ARRIVALS).sort();
   const t = dir < 0 ? ds.filter(d => d < S.date).pop() : ds.find(d => d > S.date);
-  if (!t) return;
-  S.date = t; save("date", S.date);
-  renderClock(); renderPage();
+  if (t) setDate(t);
 }
 
 /* ------------------------------------------------------------ shell */
@@ -124,9 +96,10 @@ function renderPage() {
   }).join("");
   const p = desk.planAt(S.date);
   const ne = p ? desk.editsAt(S.date).length : 0;
-  $("meta").innerHTML = p ? `Plan in force: <b>${esc(p.base.name)}</b> (posted ${dlabel(p.base.date)})${ne ? ` + ${ne} change${ne > 1 ? "s" : ""}` : ""}` : "No plan posted yet";
-  ({ inbox: pageInbox, plan: pagePlan, history: pageHistory, ask: pageAsk })[S.tab]();
+  $("meta").innerHTML = p ? `<span class="overline">Current plan</span> <b>${esc(p.base.name)}</b>${ne ? ` <span class="pill you">+${ne}</span>` : ""}` : "No plan yet";
+  (PAGES[S.tab] || pageInbox)();
 }
+const PAGES = { inbox: pageInbox, review: pageReview, plan: pagePlan, release: pageRelease, history: pageHistory, ask: pageAsk };
 function countNeeds() { const n = desk.needs(S.date); return n.sheets.length + n.inputs.length; }
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-tab]"); if (t) { S.tab = t.dataset.tab; renderPage(); return; }
@@ -142,57 +115,35 @@ function goto(spec) {                                     // "plan:R06|S014|2026
 }
 
 /* ------------------------------------------------------------ Inbox */
+const isPlanThread = th => th.kind === "calendar" || th.items.some(x => x.kind === "email" && !/Buyer_and_dock\//.test(x.src || ""));
 function pageInbox() {
-  const n = desk.needs(S.date), plan = desk.planAt(S.date);
-  const cyc = desk.cycleAt(S.date);
-  const total = n.sheets.length + n.inputs.length;
-  const sheetCards = n.sheets.map(({ sheet: s, lines }) => {
-    const id = "sh:" + s.id, open = S.open[id];
-    return `<div class="item">
-      <div class="head"><span class="pill sheet">Sheet</span><b>${esc(regName(s.region))} · ${mlong(s.cycle)} request</b><span class="hint">${dlabel(s.date)} · ${esc(s.author || "")}</span></div>
-      <div>${lines.length} line${lines.length > 1 ? "s" : ""} differ from the plan by more than 10% (and 10 cases). Largest: ${esc(itemName(lines[0].cell.sku))} ${mlabel(lines[0].cell.month)}, plan ${fmt(lines[0].plan)}, asks ${fmt(lines[0].asked)}.</div>
-      <div class="acts"><button class="btn small" data-toggle="${id}">${open ? "Hide lines" : "Review lines"}</button>
-        <button class="btn small" data-useall="${esc(s.id)}">${lines.length > 1 ? `Use all ${lines.length} requests` : "Use the request"}</button>
-        <button class="btn small" data-keepall="${esc(s.id)}">${lines.length > 1 ? "Keep the plan for all" : "Keep the plan"}</button>
-        <button class="btn small link" data-goto="sheet:${esc(s.id)}">See the sheet</button></div>
-      ${open ? `<table class="plain lines"><tr><th>Item</th><th>Month</th><th class="n">Plan</th><th class="n">Asks</th><th class="n">Diff</th><th>Sheet says</th><th></th></tr>
-        ${lines.map(l => `<tr><td><a data-goto="plan:${l.key}">${esc(itemName(l.cell.sku))}</a></td><td>${mlabel(l.cell.month)}</td><td class="n">${fmt(l.plan)}</td><td class="n"><b>${fmt(l.asked)}</b></td><td class="n ${l.d > 0 ? "up" : "down"}">${sign(l.d)}</td><td class="hint">${l.cell.rule.length ? esc(l.cell.rule.join("; ")) : `${fmt(l.cell.orig)} ${esc(l.cell.unit)}`}${l.cell.note ? " · " + esc(l.cell.note) : ""}</td>
-          <td class="nowrap"><button class="btn small" data-useline="${esc(s.id)}|${l.key}">Use</button> <button class="btn small" data-keepline="${esc(s.id)}|${l.key}">Keep plan</button></td></tr>`).join("")}</table>` : ""}
-    </div>`;
-  }).join("");
-  const threadCard = (t, waiting) => {
-    const id = t.thread.id, th = t.thread, open = S.open[id], last = th.items[th.items.length - 1];
-    const dec = waiting && t.decision;
-    return `<div class="item">
-      <div class="head"><span class="pill ${th.kind}">${th.kind === "email" ? "Email" : "Calendar"}</span><b>${esc(th.title)}</b>${th.region ? `<span class="pill">${esc(regName(th.region))}</span>` : ""}<span class="hint">${th.items.length > 1 ? th.items.length + " messages · " : ""}latest ${dlabel(last.date)} ${last.time || ""}</span></div>
-      ${dec ? `<div class="hint">Waiting since ${dlabel(dec.date)}: ${esc(dec.note || "")}</div>` : t.reopened ? `<div class="hint warn-text">New message since your last decision.</div>` : ""}
-      <div class="msgs">${(open ? th.items : th.items.slice(-1)).map(x => msgHtml(x, open)).join("")}</div>
-      <div class="acts">
-        ${th.items.length > 1 || (last.mail && last.mail.body.length > 220) ? `<button class="btn small" data-toggle="${esc(id)}">${open ? "Show less" : th.items.length > 1 ? `Read all ${th.items.length}` : "Read all"}</button>` : ""}
-        <button class="btn small primary" data-work="${esc(id)}">Change the plan</button>
-        <button class="btn small" data-decide="${esc(id)}|no-change">No change needed</button>
-        ${waiting ? "" : `<button class="btn small" data-decide="${esc(id)}|waiting">Waiting on someone</button>`}
-      </div>
-      ${S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Who or what are you waiting on?" : "Why no change? e.g. already in the Sep 11 plan"}" autofocus><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : ""}
+  const n = desk.needs(S.date), cyc = desk.cycleAt(S.date);
+  const review = Object.fromEntries(n.sheets.map(x => [x.sheet.region, x.lines.length]));
+  const tiles = cyc ? D.regions.map(r => {
+    const s = desk.latestSheet(S.date, r.code, cyc);
+    if (!s) return `<div class="tile wait"><b>${esc(r.name)}</b><span>waiting</span></div>`;
+    const st = s.problems.length ? `<span class="bad">${s.problems.length} problem${s.problems.length > 1 ? "s" : ""}</span>` : s.replaces ? `<span>corrected</span>` : `<span class="ok">✓</span>`;
+    return `<button class="tile ${S.sheetView === s.id ? "on" : ""}" data-sheet="${esc(s.id)}"><b>${esc(r.name)}</b><span>${dlabel(s.date)}</span>${st}${review[r.code] ? `<a class="rv" data-tab="review">${review[r.code]} to review</a>` : ""}</button>`;
+  }).join("") : "";
+  const plan = n.inputs.filter(t => isPlanThread(t.thread)), other = n.inputs.filter(t => !isPlanThread(t.thread));
+  const row = (t, waiting) => {
+    const th = t.thread, id = th.id, open = S.open[id], last = th.items[th.items.length - 1];
+    return `<div class="mrow ${open ? "open" : ""} ${t.reopened ? "new" : ""}">
+      <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${th.kind}">${th.kind === "email" ? "Email" : "Calendar"}</span><b>${esc(th.title)}</b>${th.region ? `<span class="reg">${esc(regName(th.region))}</span>` : ""}${th.items.length > 1 ? `<span class="hint">${th.items.length}</span>` : ""}<span class="hint">${dlabel(last.date)}</span>${waiting ? `<span class="pill Scenario" title="${esc(t.decision.note || "")}">waiting</span>` : ""}</div>
+      ${open ? `<div class="mbody">${th.items.map((x, i) => msgHtml(x, i === th.items.length - 1 || S.open[id + ":all"])).join("")}
+        <div class="acts"><button class="btn small primary" data-work="${esc(id)}">Log a change</button><button class="btn small" data-decide="${esc(id)}|no-change">No change</button>${waiting ? "" : `<button class="btn small" data-decide="${esc(id)}|waiting">Waiting on…</button>`}</div>
+        ${S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}" autofocus><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : ""}</div>` : ""}
     </div>`;
   };
-  const chips = cyc ? D.regions.map(r => {
-    const s = desk.latestSheet(S.date, r.code, cyc);
-    if (!s) return `<span class="chip wait" title="No ${mlong(cyc)} sheet yet">${esc(r.name)} · waiting</span>`;
-    const corr = s.replaces ? " · corrected" : "", prob = s.problems.length ? ` · ${s.problems.length} problem${s.problems.length > 1 ? "s" : ""}` : "";
-    return `<button class="chip ${s.problems.length ? "bad" : "ok"} ${S.sheetView === s.id ? "on" : ""}" data-sheet="${esc(s.id)}">${esc(r.name)} · ${dlabel(s.date)}${corr}${prob}</button>`;
-  }).join("") : "";
   $("page").innerHTML = `
     <div class="cols">
       <div>
-        <h1>Needs your decision</h1>
-        <div class="hint">As of ${dlong(S.date)}. Sheets and messages nobody has acted on. Anything that arrived before the last plan posted from the packet is taken as already in it.</div>
-        ${total ? "" : `<div class="empty">Nothing needs you as of ${dlabel(S.date)}.</div>`}
-        ${n.sheets.length ? `<h2>Requests that differ from the plan</h2><div class="list">${sheetCards}</div>` : ""}
-        ${n.inputs.length ? `<h2>Messages and calendar entries</h2><div class="list">${n.inputs.map(t => threadCard(t, false)).join("")}</div>` : ""}
-        ${n.waiting.length ? `<h2>Waiting on someone</h2><div class="list">${n.waiting.map(t => threadCard(t, true)).join("")}</div>` : ""}
-        ${cyc ? `<h2>${mlong(cyc)} sheets</h2><div class="chips">${chips}</div>` : ""}
+        ${cyc ? `<h2 class="first">${mlong(cyc)} sheets ${isSynthetic(cyc) ? `<span class="pill Scenario">synthetic</span>` : ""}</h2><div class="tiles">${tiles}</div>` : ""}
         ${S.sheetView ? sheetViewHtml(S.sheetView) : ""}
+        <h2>Messages ${plan.length ? `<span class="count">${plan.length}</span>` : ""}</h2>
+        <div class="mlist">${plan.map(t => row(t, false)).join("") || `<div class="empty">Nothing new.</div>`}</div>
+        ${n.waiting.length ? `<h2>Waiting <span class="count grey">${n.waiting.length}</span></h2><div class="mlist">${n.waiting.map(t => row(t, true)).join("")}</div>` : ""}
+        ${other.length ? `<h2 class="toggle" data-toggle="other">${S.open.other ? "▾" : "▸"} Dock and orders <span class="count grey">${other.length}</span></h2>${S.open.other ? `<div class="mlist">${other.map(t => row(t, false)).join("")}</div>` : ""}` : ""}
       </div>
       <div>${addBoxHtml()}</div>
     </div>`;
@@ -201,7 +152,7 @@ function pageInbox() {
 function msgHtml(x, full) {
   if (x.kind === "calendar") return `<div class="msg"><div class="hint">${dlabel(x.date)} · ${esc(x.event.status)} · event date ${esc(x.event.event_date || "")}</div><div>${esc(x.event.detail)}</div></div>`;
   const b = x.mail.body;
-  return `<div class="msg"><div class="hint">${dlabel(x.date)} ${x.time || ""} · ${esc(who(x))}${x.mail.attachments.length ? " · attached: " + esc(x.mail.attachments.join(", ")) : ""}${x.origin === "added" ? " · added here" : ""}</div><pre>${esc(full || b.length <= 220 ? b : b.slice(0, 220) + "…")}</pre></div>`;
+  return `<div class="msg"><div class="hint">${dlabel(x.date)} ${x.time || ""} · ${esc(who(x))}${x.mail.attachments.length ? " · 📎 " + esc(x.mail.attachments.join(", ")) : ""}</div><pre>${esc(full ? b : b.split(/\n/)[0].slice(0, 140) + "…")}</pre></div>`;
 }
 function bindInbox() {
   document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { S.open[b.dataset.toggle] = !S.open[b.dataset.toggle]; renderPage(); });
@@ -264,17 +215,65 @@ function sheetViewHtml(id) {
     <div class="hint">Cases. Hover a number for the sheet's own figure and the rule applied.</div></div>`;
 }
 
+/* ------------------------------------------------------------ Review: only the lines that need the planner */
+function reviewLines() {                                  // engine hook: desk.review(T) once core.js provides it
+  if (desk.review) return desk.review(S.date);
+  const n = desk.needs(S.date), out = [];
+  for (const { sheet, lines } of n.sheets) for (const l of lines) {
+    const [r, sku, m] = l.key.split("|");
+    out.push({ key: l.key, region: r, sku, month: m, last: l.plan, ask: l.asked, expected: null, why: `asks ${sign(l.d)}`, sheet: sheet.id, note: l.cell.rule.join("; ") });
+  }
+  return { lines: out.sort((a, b) => Math.abs(b.ask - b.last) - Math.abs(a.ask - a.last)), total: null, sheets: n.sheets.length };
+}
+function pageReview() {
+  const cyc = desk.cycleAt(S.date), rv = reviewLines(), L = rv.lines;
+  const got = cyc ? D.regions.filter(r => desk.latestSheet(S.date, r.code, cyc)).length : 0;
+  const tile = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
+  $("page").innerHTML = `
+    <div class="planhead"><h1>Review${cyc ? ` · ${mlong(cyc)}` : ""}</h1>${cyc && isSynthetic(cyc) ? `<span class="pill Scenario">synthetic</span>` : ""}</div>
+    <div class="stats">${tile(`${got}/6`, "sheets in")}${rv.total != null ? tile(rv.total, "lines drafted") + tile(rv.total - L.length, "accepted as asked", "ok") : ""}${tile(L.length, "need you", L.length ? "warn" : "ok")}</div>
+    ${L.length ? `<table class="plain review flags"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Plan</th><th class="n">Asks</th><th class="n">Expected</th><th>Why</th><th></th></tr>
+      ${L.map(l => `<tr><td>${esc(regName(l.region))}</td><td><a data-goto="plan:${l.key}">${esc(itemName(l.sku))}</a></td><td>${mlabel(l.month)}</td>
+        <td class="n">${fmt(l.last)}</td><td class="n"><b>${fmt(l.ask)}</b></td><td class="n">${l.expected != null ? fmt(l.expected) : `<span class="hint">—</span>`}</td>
+        <td class="why" title="${esc(l.detail || l.note || "")}">${esc(l.why)}</td>
+        <td class="nowrap"><button class="btn small" data-useline="${esc(l.sheet)}|${l.key}">Use ask</button> <button class="btn small" data-keepline="${esc(l.sheet)}|${l.key}">Keep plan</button> <button class="btn small link" data-goto="plan:${l.key}">Set…</button></td></tr>`).join("")}</table>`
+    : `<div class="empty">${cyc ? "Nothing to review." : "No sheets yet."}</div>`}`;
+  bindInbox();
+}
+
+/* ------------------------------------------------------------ Release: what purchasing and finance read */
+function releaseRows() {
+  const plan = desk.planAt(S.date); if (!plan) return [];
+  return Object.entries(plan.applied).map(([key, list]) => {
+    const [r, sku, m] = key.split("|"), k = r + "|" + sku;
+    return { key, r, sku, m, was: plan.base.grid[k][m], now: plan.grid[k][m], why: list.map(e => e.reason).join(" · "), src: list.map(e => e.src ? srcName(e.src) : "").filter(Boolean)[0] || "" };
+  }).sort((a, b) => a.m.localeCompare(b.m) || a.r.localeCompare(b.r));
+}
+function pageRelease() {
+  const plan = desk.planAt(S.date);
+  if (!plan) { $("page").innerHTML = `<div class="empty">No plan yet.</div>`; return; }
+  const rows = releaseRows(), open = desk.needs(S.date).waiting;
+  const net = rows.reduce((t, x) => t + x.now - x.was, 0);
+  $("page").innerHTML = `
+    <div class="planhead"><h1>Release</h1><span class="hint">since ${esc(plan.base.name)} · ${dlabel(plan.base.date)}</span><div class="spacer"></div><button class="btn primary" id="exportBuy">Export for purchasing</button></div>
+    <div class="stats"><div class="stat"><b>${rows.length}</b><span>lines changed</span></div><div class="stat"><b>${sign(Math.round(net))}</b><span>cases, net</span></div><div class="stat ${open.length ? "warn" : ""}"><b>${open.length}</b><span>open questions</span></div></div>
+    ${rows.length ? `<table class="plain review"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Released</th><th class="n">Proposed</th><th class="n">Change</th><th>Why</th><th>Source</th></tr>
+      ${rows.map(x => `<tr><td>${esc(regName(x.r))}</td><td><a data-goto="plan:${x.key}">${esc(itemName(x.sku))}</a></td><td>${mlabel(x.m)}</td><td class="n">${fmt(x.was)}</td><td class="n"><b>${fmt(x.now)}</b></td><td class="n ${x.now > x.was ? "up" : "down"}">${sign(x.now - x.was)}</td><td class="why" title="${esc(x.why)}">${esc(x.why)}</td><td class="hint">${esc(x.src)}</td></tr>`).join("")}</table>`
+    : `<div class="empty">No changes since release.</div>`}
+    ${open.length ? `<h2>Open questions</h2><div class="mlist">${open.map(w => `<div class="mrow"><div class="mhead"><span class="pill Scenario">open</span><b>${esc(w.thread.title)}</b>${w.thread.region ? `<span class="reg">${esc(regName(w.thread.region))}</span>` : ""}<span class="hint">${esc(w.decision.note || "")}</span></div></div>`).join("")}</div>` : ""}`;
+  $("exportBuy").onclick = exportBuyReview;
+}
+
 /* ------------------------------------------------------------ Add to the desk: paste, drop, folder */
 function addBoxHtml() {
   const p = S.preview;
   return `<div class="addbox" id="addbox">
-    <h2>Add to the desk</h2>
-    <div class="hint">Paste cells copied from a manager's sheet, or the text of an email. Or drop a file here: .xlsx, .csv, .eml or .txt. It is dated ${dlabel(S.date)}, the desk's date.</div>
-    <textarea id="pasteBox" placeholder="Paste here">${esc(S.pasteText || "")}</textarea>
+    <h2 class="first">Add</h2>
+    <textarea id="pasteBox" placeholder="Paste a sheet or an email, or drop a file">${esc(S.pasteText || "")}</textarea>
     <div class="acts"><button class="btn primary" id="readPaste">Read it</button>
       <label class="btn">Choose file<input type="file" id="fileIn" accept=".xlsx,.xls,.csv,.eml,.txt" multiple hidden></label>
       <button class="btn" id="watch">${S.folder ? "Check folder now" : "Watch a folder"}</button></div>
-    ${S.folder ? `<div class="hint">Watching “${esc(S.folder.name)}”. New files are added as they appear (checked every 30 s). ${esc(S.folder.status || "")}</div>` : `<div class="hint">A watched folder can be a shared drive synced to this computer. Edge or Chrome only.</div>`}
+    ${S.folder ? `<div class="hint">Watching “${esc(S.folder.name)}” · ${esc(S.folder.status || "")}</div>` : ""}
     ${p ? previewHtml(p) : ""}
   </div>`;
 }
@@ -293,7 +292,7 @@ function previewHtml(p) {
       <div>Lines</div><div>${r.counts.cells} read · ${r.counts.ea} converted from EA · ${r.counts.carried} carried · ${r.counts.cancelled} zero</div>
       <div>Against the plan</div><div>${diff} line${diff === 1 ? "" : "s"} differ by more than 10%</div></div>
       ${r.problems.length ? `<div class="problems">${r.problems.slice(0, 8).map(esc).join("<br>")}${r.problems.length > 8 ? `<br>and ${r.problems.length - 8} more` : ""}</div>` : `<div class="hint ok-text">No problems found.</div>`}
-      <div class="acts"><button class="btn primary" id="pvAdd">Add to the desk</button><button class="btn" id="pvCancel">Cancel</button></div></div>`;
+      <div class="acts"><button class="btn primary" id="pvAdd">Add</button><button class="btn" id="pvCancel">Cancel</button></div></div>`;
   }
   const m = p.mail;
   return `<div class="preview">
@@ -302,7 +301,7 @@ function previewHtml(p) {
     <div>From</div><div>${esc(m.sender || "—")}${m.date ? ` · written ${dlabel(m.date)}` : ""}</div>
     <div>Region</div><div><select id="pvRegion"><option value="">Network or unknown</option>${D.regions.map(g => `<option value="${g.code}" ${g.code === p.region ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></div></div>
     <pre>${esc(m.body.slice(0, 400))}${m.body.length > 400 ? "…" : ""}</pre>
-    <div class="acts"><button class="btn primary" id="pvAdd">Add to the desk</button><button class="btn" id="pvCancel">Cancel</button></div></div>`;
+    <div class="acts"><button class="btn primary" id="pvAdd">Add</button><button class="btn" id="pvCancel">Cancel</button></div></div>`;
 }
 /* one reader for every way in: pasted text, a dropped or chosen file, a folder */
 async function readInput(name, payload) {
@@ -433,7 +432,7 @@ function pagePlan() {
       <button class="btn" id="exportBuy">Export buy review</button>
       <button class="btn primary" id="publish">Publish version</button>
     </div>
-    <div class="hint">Cases per region. Starts from ${esc(plan.base.name)} (posted ${dlabel(plan.base.date)})${mEdits ? `, with ${mEdits} change${mEdits > 1 ? "s" : ""} this month (blue)` : ""}. ${flagged} number${flagged === 1 ? "" : "s"} fail a check (amber corner). Click a number to see where it came from. Type to change it.</div>
+    <div class="legend"><span>Cases</span>${mEdits ? `<span><i class="key changed"></i>${mEdits} changed</span>` : ""}${flagged ? `<span><i class="key flag"></i>${flagged} flagged</span>` : ""}<span class="hint">Click a number for its story · type to change it</span></div>
     ${S.publishing ? publishHtml(plan, edits) : ""}
     ${th ? `<div class="banner">Working on <b>${esc(th.title)}</b>${th.region ? ` (${esc(regName(th.region))})` : ""}. Changes you save now are linked to it. <button class="btn small" id="doneWork">Done</button></div>` : ""}
     <div class="layout ${S.sel ? "" : "nodetail"}">
@@ -591,7 +590,6 @@ function pageHistory() {
     <div class="planhead"><h1>History</h1>
       <div class="seg">${[["log", "What happened"], ["trend", "Trends"], ["compare", "Compare versions"]].map(([k, n]) => `<button class="${S.hist === k ? "on" : ""}" data-hist="${k}">${n}</button>`).join("")}</div>
       <div class="spacer"></div>
-      <span class="hint">Desk record:</span>
       <button class="btn small" id="recExport">Export</button>
       <label class="btn small">Import<input type="file" id="recImport" accept=".json" hidden></label>
       <button class="btn small" id="recExample">Load September example</button>
@@ -646,7 +644,6 @@ function histLog() {
   const rows = es.map((e, i) => { const d = e.date !== last ? `<div class="day">${dlong(e.date)}</div>` : ""; last = e.date; const id = "log" + i;
     return d + `<div class="logrow ${e.kind}"><span class="pill ${e.kind}">${{ plan: "Plan", sheet: "Sheet", msg: "Message", you: "You" }[e.kind]}</span><div><div>${e.text}${e.body ? ` <button class="btn small link" data-logopen="${id}">${S.open[id] ? "Hide" : "Read"}</button>` : ""}</div>${e.why ? `<div class="hint">${esc(e.why)}</div>` : ""}${e.body && S.open[id] ? `<pre>${esc(e.body)}</pre>` : ""}</div></div>`; }).join("");
   $("histBody").innerHTML = `
-    <div class="hint">Everything that reached the desk or changed on it, newest first, up to ${dlong(S.date)}. Move the slider to see the record as it stood on any day.</div>
     <div class="seg" style="margin:10px 0">${kinds.map(([k, n]) => `<button class="${S.histKind === k ? "on" : ""}" data-kind="${k}">${n} (${k === "all" ? all.length : all.filter(e => e.kind === k).length})</button>`).join("")}</div>
     <div class="log">${rows || `<div class="empty">Nothing yet.</div>`}</div>`;
   document.querySelectorAll("[data-kind]").forEach(b => b.onclick = () => { S.histKind = b.dataset.kind; renderPage(); });
@@ -689,7 +686,6 @@ function histTrend() {
     <div class="row">
       <select id="tSku">${D.items.map(i => `<option value="${i.sku}" ${i.sku === sku ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select>
       <select id="tReg"><option value="">Whole network</option>${D.regions.map(r => `<option value="${r.code}" ${r.code === region ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
-      <span class="hint">Cases per month as of ${dlabel(T)}. Hover a point for its value.</span>
     </div>
     ${svg}
     <div class="legend">${series.map(s => `<span><i class="sw ${s.cls}"></i>${esc(s.name)}</span>`).join("")}</div>
@@ -708,7 +704,6 @@ function histCompare() {
   }
   const opt = sel => vs.map(v => `<option value="${v.id}" ${v.id === sel ? "selected" : ""}>${dlabel(v.date)} · ${esc(v.name)} (${esc(v.status)})</option>`).join("");
   $("histBody").innerHTML = `
-    <div class="hint">Every plan file the desk saved, and every version published here. Pick two to see which lines moved.</div>
     <div class="row" style="margin:10px 0"><select id="dA">${opt(S.diffA)}</select><span>→</span><select id="dB">${opt(S.diffB)}</select></div>
     ${rows.length ? `<table class="plain"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">${esc(A.name)}</th><th class="n">${esc(B.name)}</th><th class="n">Change</th></tr>${rows.join("")}</table>` : `<div class="empty">No line differs between these two.</div>`}
     <div class="hint" style="margin-top:6px">${rows.length} line${rows.length === 1 ? "" : "s"} differ. Desk note on the later file: ${esc(B.note || "—")}</div>`;
@@ -747,16 +742,16 @@ function workedExample() {
   const base = "2026-09:Network supply plan - Sep post", E = "email:Correspondence/Planning_inbox/";
   const rec = emptyRecord();
   const ed = (date, key, dv, reason, src, extra = {}) => rec.edits.push({ id: uid("e"), date, key, dv, qty: dv, unit: "CS", base, reason, src, ...extra });
-  ed("2026-09-14", "R06|S014|2026-10", 90, "October mango feature, first estimate of 720 bottles. Harbor's sheet has regular service only, so this is extra.", "thread:october mango request", { qty: 720, unit: "EA" });
-  ed("2026-09-17", "R06|S014|2026-10", -10, "Final shop list: 480 bottles in total; two shops dropped out. Brings the feature from 720 to 480 bottles.", "thread:october mango request", { qty: -60, unit: "EA" });
+  ed("2026-09-14", "R06|S014|2026-10", 120, "Oct mango promo: +720 bottles", "thread:october mango request", { qty: 720, unit: "EA" });
+  ed("2026-09-17", "R06|S014|2026-10", -40, "Promo cut to 480 bottles total", "thread:october mango request", { qty: -240, unit: "EA" });
   for (const [sku, q] of [["S001", 24], ["S005", 18], ["S014", 12]]) {
-    const g = uid("g"), why = "Second opening moved to Nov 9, so the opening kit ships Nov 2 instead of Oct 5. Same quantities.";
+    const g = uid("g"), why = "Opening kit moved to Nov 2";
     ed("2026-09-16", `R04|${sku}|2026-10`, -q, why, "thread:second opening / new dock week", { group: g });
     ed("2026-09-16", `R04|${sku}|2026-11`, q, why, "thread:second opening / new dock week", { group: g });
   }
-  rec.decisions.push({ id: uid("d"), date: "2026-09-16", target: "cal:OP-FR-02", outcome: "no-change", note: "Kit move logged from the Front Range email." });
-  rec.decisions.push({ id: uid("d"), date: "2026-09-17", target: "cal:GC-PROMO-01", outcome: "no-change", note: "Mango feature logged from Remy Ellis's emails." });
-  rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter menu trial (CA-TEST-03) has no site list or quantities yet. Keep the holiday assumptions." });
+  rec.decisions.push({ id: uid("d"), date: "2026-09-16", target: "cal:OP-FR-02", outcome: "no-change", note: "Logged from the Front Range email" });
+  rec.decisions.push({ id: uid("d"), date: "2026-09-17", target: "cal:GC-PROMO-01", outcome: "no-change", note: "Logged from the mango emails" });
+  rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter trial: no sites or quantities yet" });
   return rec;
 }
 
