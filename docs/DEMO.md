@@ -6,8 +6,8 @@ About 6 minutes. October is made up from the real September files and says so on
 
 1. In `C:\AISA`: `npm run dev`.
 2. Clear the old record: in the browser console, `Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k))`.
-3. Tab 1, head manager: http://127.0.0.1:8788/?example=1. September is done; the day is Tue Oct 6.
-4. Tab 2 comes from **Submanager view ↗** at the top right of tab 1.
+3. Open the head-manager page: http://127.0.0.1:8788/?example=1 (if the server says it started on another port, use that one). September is done; the day is Tue Oct 6.
+4. Step 9 opens the submanager page in a second tab, from **Submanager view ↗** at the top right.
 5. The AI buttons need `ANTHROPIC_API_KEY=...` in `C:\AISA\.dev.vars`. Without it they say "Assistant not connected".
 
 ## Steps
@@ -22,8 +22,8 @@ About 6 minutes. October is made up from the real September files and says so on
 | 6 | On three lines: **Use theirs**, **Keep last plan**, **Set…** | "Three choices. Anything I skip goes in as asked." |
 | 7 | **Next: publish** → click any number → **Publish the October plan** | "Each number shows what was asked, the checks and every past version." |
 | 8 | **Next: late news** → **Next day ▶** three times, to Mon Oct 12 → open *November harvest feature - spiced pear* → **Log a change** → `600`, **bottles** → **Save change** | "It converts 600 bottles to 100 cases. The calendar entry for the same promotion closes with it." |
-| 9 | Tab 2: **Gulf Coast** → drop `synthetic\Harbor 2026-10 roll.xlsx` → **Send sheet** → a late request → **Next: done** | "A submanager has a short path of their own: region, sheet, late request, done." |
-| 10 | Tab 1, **Late news** | "What they sent is here. The request opens with their numbers filled in." |
+| 9 | **Submanager view ↗** at the top right (opens the submanager page in a new tab) → **Gulf Coast** → drag `C:\AISA\synthetic\Harbor 2026-10 roll.xlsx` onto the drop zone → **Send sheet** → a late request → **Next: done** | "A submanager has a short path of their own: region, sheet, late request, done." |
+| 10 | Back to the first tab (head manager) → **Late news** | "What they sent is here. The request opens with their numbers filled in." |
 | 11 | **Next: send to purchasing** → **Download the list for purchasing** | "One list for purchasing: what changed since publishing, and why. Open questions and what-ifs change no numbers." |
 | 12 | Click the date at the top → pick **Fri, Sep 18** → **Publish** step | "On the six real September sheets this lands within 5% of Dutch Bros' own posted plan on 745 of 864 lines." |
 
