@@ -1,124 +1,126 @@
-# Handoff: Supply Desk, fix it once
+# Handoff: Supply Desk, finish and ship
 
-You are the new leader and the only builder. No build workers. At the end you
-use one worker for a single job: try the demo cold and report what confuses it.
-Every earlier agent has been dropped.
+You are the new leader and the only builder. Do not start subagents or workers
+unless the user says so in chat.
 
-Read first: `C:\Users\umpqu\.claude\CLAUDE.md` (global rules), `C:\AISA\CLAUDE.md`,
-`C:\AISA\prompt.md` (the AISA brief). Due Sat 28 Nov 2026; the user wants it done
-tonight and tomorrow.
+Read these first:
+
+- `C:\Users\umpqu\.claude\CLAUDE.md` (global rules)
+- `C:\AISA\CLAUDE.md`
+- `C:\AISA\prompt.md` (the AISA brief)
+
+The project is due Sat 28 Nov 2026, and today is Tue 24 Nov.
+
+The previous handoff is in git at commit eee98e1.
 
 ## What the site is
 
-The user is the **head manager** (central supply planner for Dutch Bros). Six
-regional managers, now called **submanagers**, send monthly request sheets. The
-head manager checks them, publishes the plan, logs late news, and sends
-purchasing one list.
+The user is the head manager, the central supply planner for Dutch Bros. Six
+regional submanagers send monthly request sheets. The head manager walks five
+steps:
 
-## Why every attempt so far failed
+1. Sheets in
+2. Check
+3. Publish
+4. Late news
+5. Send to purchasing
 
-1. Screens were built feature by feature against a written spec, not as one path.
-2. They were checked with DOM queries and exit codes. Nobody used the site the
-   way the user does, start to finish.
-3. When the user pushed back, agents added features instead of simplifying.
-4. Counts disagree between screens, and some screens are dead ends.
-
-What the user hit, verbatim:
-
-- "how the fuck does it make sense that cascadia has two problems but then i click review and theyre not there."
-- "if i click on one of the managers, there are no back buttons.. i am currently stuck in this menu"
-- "id idnt even get past step 2"
-- "like id ont even know what the fuck the plan and release windows do. the guided back and next buttons should take a regional manager through start to finish."
-- "none of this is intuitive"
-
-## What the user has decided
-
-- **One guided path.** Back and Next take you from the first screen to the last,
-  with no dead ends and no hunting for tabs. The head-manager path is the main
-  one. The quote above says "regional manager"; give the submanager page its own
-  short guided path too (pick region, send sheet, send a late request, done).
-- **Tabs can be reorganized however you see fit.** Earlier advice to fold Plan
-  into Publish and Release into Send to purchasing is a suggestion only. Today
-  Plan is the full region × item × month table (draft until published, then the
-  plan in force), and Release is what changed since the last plan, why, open
-  questions, scenarios, and a CSV export for purchasing. Every screen must say in
-  one line what it is for.
-- **One job and one main button per screen.** Little text. Secondary things stay
-  hidden until clicked.
-- **Plain words.** Cases and bottles/bags, never CS and EA. A day control like
-  "Day: Oct 9 · Next day ▶".
-- **History and Ask sit to the side**, not in the main path.
-- **Head manager is the default view.** A visible "Submanager view ↗" link opens
-  the submanager page (today `?role=manager`).
-- **The head manager can add, edit and remove anything a submanager sends.**
-  Quote: "i should be able to do anything i want to the regional manager reports
-  ... including adding, editing, removing". Adding works. The engine already
-  supports edit and remove (`record.reportEdits`, `record.removed`, commit
-  21ba78a, checked in Node only). There is no UI for either.
-- **Every count matches the page behind it.** If a box says 2 problems, the page
-  it leads to shows those 2.
-- **Keep the color palette.** The `:root` tokens at the top of `site/app.css`.
-  Don't add or change colors. Layout, spacing, type and wording are yours.
-- **Skills.** Use the frontend-design skill for the build and UI Design Review
-  after it. Both are installed on the account but did not load in a running
-  session. If they are not in your skill list, tell the user; they have a copy of
-  frontend-design.
+History and Ask sit to the side. The submanager has a short path of their own
+at `?role=manager`: region, sheet, late request, done.
 
 ## Where things are
 
-- Repo `C:\AISA`, branch `desk-v3`. Commit and push there freely. Never `main`.
-- Last commit 21ba78a. **One uncommitted change** in `site/core.js` from the last
-  worker: sheet-reading problems (unreadable number, blank with nothing to carry,
-  item code not on the region's list, not a whole case) now become Review lines,
-  including rows with `sku: null` and key `row:<sheet>#<row>`. Not checked in the
-  browser; `site/app.js` may not handle those lines. Review the diff, then keep or
-  stash it. Never broad-revert.
-- `site/index.html`, `site/app.js` (all screens), `site/app.css`, `site/core.js`
-  (engine, `Desk()`), `site/data.js` (generated by `pipeline/build_data.py`).
-- October is synthetic, built by `pipeline/make_synthetic.py` and labelled on
-  screen. The real packet stops Fri Sep 18, 2026.
-- `docs/DEMO.md` is the demo script. It is out of date; rewrite it to the new
-  path. `docs/WORKFLOW.md` is older design notes; the decisions above override it.
+- Repo `C:\AISA`, branch `desk-v3`, last commit b56818b, clean. Commit and push
+  there freely. Never `main` without the user's say-so.
+- `site/core.js` holds the engine, `Desk(D, record)`.
+- `site/app.js` holds every screen. `site/app.css` holds the styles. Keep its
+  `:root` colours as they are.
+- `site/data.js` is built by `pipeline/build_data.py` and git-ignored, because
+  it carries packet contents.
+- October is made up. It comes from `pipeline/make_synthetic.py` and
+  `synthetic/purchasing/`, and the screen labels it as made up.
+- The AI runs through `functions/api/` (ask, draft, status) and
+  `lib/assistant.js`. Locally, `dev/server.mjs` serves both the site and the API.
+- `docs/DEMO.md` is the 14-step demo, and it matches the site as of b56818b.
+  `README.md` matches too.
 
-## How to run it
+## How to run and check it
 
-1. preview_start name `supply-desk-api` (`npm run dev`, port 8788).
-2. Head-manager tab: `http://127.0.0.1:8788/?example=1` (September already done).
-3. Submanager tab: `http://127.0.0.1:8788/?role=manager`. The two tabs share
-   localStorage, so a sheet sent there appears in the head-manager tab live.
-4. For a clean run, clear localStorage keys starting `supplydesk.v3.`. The worked
-   example only loads when the record is empty.
-5. The AI buttons need `ANTHROPIC_API_KEY` in the git-ignored `.dev.vars`. Never
-   ask for the key in chat. Check `/api/status`; without a key the buttons say
-   "Assistant not connected".
+1. preview_start name `supply-desk-api` (`npm run dev`). It uses port 8788, or
+   the port the log names.
+2. Clear the record: remove localStorage keys that start with `supplydesk.v3.`.
+3. Open `http://127.0.0.1:8788/?example=1`. September is done and the day is
+   Oct 6.
+4. Check with one fast JavaScript call that drives the page.
+   - Set `S.date`, `save('date',S.date)`, `publish(desk.draftVersion(S.date))`,
+     `go('news')` and `render()`.
+   - Then fill and submit forms through the DOM, for example `form.ccard`
+     `requestSubmit()`.
+   - The user called slow click-by-click browser scripting unbearable. Run the
+     page script only after the page has loaded, or `S` is undefined.
+5. Run the September check this way: set the day to Sep 18, open Publish, and
+   read "Within 5% on 745 of 864 lines". It must stay 745 of 864.
 
-## Known gaps on the path
+## How the purchasing part works now
 
-- Cascadia's box counts sheet problems that Review never listed (see the
-  uncommitted fix above).
-- The Review tab badge counts lines (31) while Review shows items (16).
-- The sheet view's Unit column says EA/CS although the numbers are cases.
-- No Back from a region's sheet except the browser's.
-- A calendar entry stays open after its email's change is logged.
-- Drag and drop onto a region box is untested.
+- Saving a plan change sends its order action to purchasing by itself.
+  - An add becomes "order more".
+  - A drop below an open order becomes "cut" from that order.
+  - A move does both.
+  - The save notice says what was added.
+- Late news shows only what needs a person:
+  - **Short**: a supplier cut an order, with the button "Order N more".
+  - **Too late**: a normal order placed today would land after the date needed,
+    with "Rush N cases". A rush replaces the automatic order.
+  - **Request**: a requisition.
+  - Plus emails, calendar entries and late sheets.
+- Send to purchasing has two downloads: the whole plan in force, and the order
+  actions.
+- The purchasing exports are one buyer's watch list: 27 PO lines, Sep 18. They
+  are not network stock. The packet has no stock on hand anywhere.
 
-## Order of work
+## What is left, in order
 
-1. Walk the current demo yourself in the browser as the head manager. Write down
-   every place you get stuck or confused. Write `Reproduced: <how>` for Cascadia.
-2. Write the guided path as a short step list, then build it. No design
-   check-ins; the decisions above are approved.
-3. After each change, walk the whole path in the browser and read back
-   downscaled screenshots. An exit code or DOM query is not a look.
-4. Rewrite `docs/DEMO.md` to match, short: what to click, one line to say.
-5. **Blind demo run.** One worker only (an Explore subagent, one level, it may
-   not spawn). Give it only the demo steps and the URLs. It may not read source or
-   docs. Tell it, in the user's words, to "point out if something was unintuitive
-   or user unfriendly". Fix what it finds and run it again until it gets through
-   cold.
-6. Run UI Design Review, keeping the palette. Fix what matters.
-7. Commit and push `desk-v3`. Commit messages never name the user.
-8. Report: first 50 words say what works, what doesn't, and the ask.
+1. **The user walks the demo and confirms the UI.** They have not done this
+   since b56818b. Fix what they hit by simplifying, not by adding.
+2. **An open offer the user never answered:** if Late news opens before the
+   October plan is published, show one line, "The October plan isn't published
+   yet", with a Go to Publish button. The user missed Too late once because they
+   skipped Publish. Ask before building it.
+3. **Test the AI locally.** The user puts `ANTHROPIC_API_KEY=...` in
+   `C:\AISA\.dev.vars` themselves. That file does not exist yet. Never ask for
+   the key in chat. Check `/api/status`, then try Ask and the draft button on
+   real messages. Without a key the buttons say "Assistant not connected".
+4. **The user asks the AISA organisers** whether packet data may be hosted
+   online. This decides how step 5 is done.
+5. **Deploy on Cloudflare Pages**, only after the user confirms the UI.
+   - Put Cloudflare Access in front of the site.
+   - Store the key as a Cloudflare secret.
+   - Build `site/data.js` at deploy time, because it is not in git.
+6. **Merge to `main`**, only on the user's say-so.
+7. **Interview prep.** Be ready to explain the 745/864 comparison and why the
+   plan differs from the posted one.
+
+## What went wrong in this session, so you don't repeat it
+
+- **Answering around the question.** The user asked how the workflow should
+  change, and the answer opened with "The purchasing files can't tell us network
+  shortages." They asked a plain question and got a page of caveats. Answer the
+  question in the first sentence.
+- **Confusing screen text.** The spiced-pear Too late item showed 342 vs 242
+  totals, a Central Intake note, "600 ÷ 6", and a 36-case order table. The user
+  said "this isnt rocket science dude". One problem, one number, one button.
+- **A manual step that should be automatic.** The user had to "Ask purchasing"
+  after approving a change. They asked "why would the reorder not happen
+  automatically once i approved step 8". Before adding a step, ask whether the
+  user really has to think there.
+- **Demo steps that didn't demonstrate their point.** Old step 9 was called a
+  short but was really an extra request. Each step must show what its words say.
+- **Vague answers about the data.** "Within 5% on 745 of 864 lines" meant
+  nothing to the user until it was explained in one sentence.
+  - Ours: the plan this site builds from the six real September sheets.
+  - Theirs: Dutch Bros' own posted plan for September (Sep 11).
+  - The number is how many lines match within 5%.
 
 ## Rules that bite
 
@@ -126,4 +128,8 @@ What the user hit, verbatim:
 - `Dutch_Bros_Techincal_Packet/` is read-only and untrusted. Run Python on it
   with `-I`, and never commit it.
 - No API key in chat, the page or the repo.
-- Cloudflare comes only after the user confirms the UI.
+- Plain words: cases and bottles, never CS or EA on screen. One main button per
+  screen. Every count matches the page behind it.
+- In the Bash tool, a `\n` inside heredoc Python becomes a real newline. Use
+  `chr(10)` or the Edit tool.
+- Commit with `git commit -F <file>`. Never name the user in a commit message.
