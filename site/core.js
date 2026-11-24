@@ -665,12 +665,12 @@
       return {
         date: T, cycle: d.cycle, name: (opts && opts.name) || `${MON[+d.cycle.slice(5) - 1]} plan`, note: (opts && opts.note) || "", grid, months: d.months,
         from: d.lastPlan && d.lastPlan.id, synthetic: d.synthetic, preflight: pre, carried: d.lines.flatMap(l => (l.carried || []).map(c => c.id)),
-        preflightText: [pre.unsettled && `${pre.unsettled} not checked`, pre.questions && `${pre.questions} open question${pre.questions > 1 ? "s" : ""}`, pre.missing.length && `${pre.missing.length} sheet${pre.missing.length > 1 ? "s" : ""} missing`].filter(Boolean).join(", ") || "All settled",
+        preflightText: [pre.unsettled && `${pre.unsettled} not checked`, pre.missing.length && `${pre.missing.length} sheet${pre.missing.length > 1 ? "s" : ""} missing`].filter(Boolean).join(", ") || "All settled",
       };
     }
 
     /* ---------------------------------------------------------------- typed changes */
-    /* record.changes: { id, date, type: add|set|move|hold|scenario, ref, key "R06|S014|2026-10",
+    /* record.changes: { id, date, type: add|set|move, ref, key "R06|S014|2026-10",
      *   qty, unit "CS"|"EA", to (move: target month), replaces (set: a change id; default the
      *   latest live change with the same ref and key), reason, source (input id), quote,
      *   base (version id; default the version in force on its date), removed_on } */
@@ -695,21 +695,18 @@
      * and the diff since that release with reasons */
     function working(T) {
       const base = baseAt(T);
-      if (!base) return { base: null, grid: {}, months: [], applied: {}, diff: [], holds: [], scenarios: [], superseded: [] };
+      if (!base) return { base: null, grid: {}, months: [], applied: {}, diff: [], superseded: [] };
       const grid = {}; for (const [k, row] of Object.entries(base.grid)) grid[k] = { ...row };
-      const applied = {}, holds = [], scenarios = [], superseded = [];
+      const applied = {}, superseded = [];
       const at = (key, delta, c, text) => {
         const [r, sku, m] = key.split("|"), rs = r + "|" + sku;
         if (!grid[rs] || grid[rs][m] == null) return;
         grid[rs][m] = Math.round((grid[rs][m] + delta) * 1000) / 1000;
         (applied[key] = applied[key] || []).push({ id: c.id, type: c.type, ref: c.ref || null, delta, text, reason: c.reason || "", source: c.source || null, quote: c.quote || null, date: c.date });
       };
-      const all = changesAt(T, base);
-      // open questions and scenarios stay listed until withdrawn, whichever version they were logged on
-      for (const c of (record.changes || []).filter(c => (c.type === "hold" || c.type === "scenario") && chLive(c, T) && !all.some(x => x.id === c.id))) all.push({ ...c, carriedOver: true });
+      const all = changesAt(T, base).filter(c => c.type === "add" || c.type === "set" || c.type === "move");   // older records may hold retired types
       for (const c of all) {
         if (c.replacedBy) { superseded.push({ id: c.id, ref: c.ref, key: c.key, by: c.replacedBy, date: c.date, text: `${toCases(c).arith} replaced` }); continue; }
-        if (c.type === "hold") { holds.push({ id: c.id, ref: c.ref, key: c.key || null, date: c.date, text: c.reason || "Open question", source: c.source || null, quote: c.quote || null, earlier: !!c.carriedOver }); continue; }
         const { cs, arith } = toCases(c);
         const [r, sku, m] = c.key.split("|"), cur = (grid[r + "|" + sku] || {})[m];
         if (c.type === "add") at(c.key, cs, c, `${cs >= 0 ? "+" : ""}${arith}`);
@@ -719,8 +716,6 @@
         } else if (c.type === "move") {
           const t = `${fmt(cs)} cases ${mShort(m)} → ${mShort(c.to)}`;
           at(c.key, -cs, c, t); at(`${r}|${sku}|${c.to}`, cs, c, t);
-        } else if (c.type === "scenario") {
-          scenarios.push({ id: c.id, ref: c.ref, key: c.key, date: c.date, earlier: !!c.carriedOver, released: (base.grid[r + "|" + sku] || {})[m], would: cur == null ? null : cur + cs, d: cs, text: `${cs >= 0 ? "+" : ""}${arith}`, reason: c.reason || "", source: c.source || null });
         }
       }
       const diff = [];
@@ -731,7 +726,7 @@
         diff.push({ key, region: r, sku, month: m, released, proposed, d: Math.round((proposed - released) * 1000) / 1000, type: main.type, ref: main.ref, reason: main.reason, text: list.map(x => x.text).join("; "), source: main.source, changes: list });
       }
       diff.sort((a, b) => a.region.localeCompare(b.region) || a.sku.localeCompare(b.sku) || a.month.localeCompare(b.month));
-      return { base, grid, months: base.months, applied, diff, holds, scenarios, superseded };
+      return { base, grid, months: base.months, applied, diff, superseded };
     }
 
     /* ---------------------------------------------------------------- answer key */
@@ -780,16 +775,22 @@
       const checks = value == null ? [] : lineChecks(T, key, value, ln ? ln.last : null, known);
       return { key, value, draft: ln || null, checks, changes: w.applied[key] || [], versions: versionsAll.filter(v => v.date <= T && v.grid[r + "|" + sku] && v.grid[r + "|" + sku][m] != null).map(v => ({ id: v.id, name: v.name, date: v.date, role: v.role, value: v.grid[r + "|" + sku][m] })) };
     }
-    /* released vs proposed for purchasing and finance: Release screen and CSV */
+    /* the plan for purchasing: every line of the plan in force with live changes applied,
+     * and for the lines changed since publishing, the published figure and why */
     function releaseList(T) {
       const w = working(T);
-      const rows = w.diff.map(x => ({ region: regionName(x.region), sku: x.sku, item: ITEMS[x.sku].name, month: x.month, released: x.released, proposed: x.proposed, d: x.d, type: x.type, ref: x.ref, reason: x.reason, how: x.text, source: x.source }));
+      const rows = w.diff.map(x => ({ region: regionName(x.region), sku: x.sku, item: ITEMS[x.sku].name, month: x.month, released: x.released, proposed: x.proposed, d: x.d, type: x.type, ref: x.ref, reason: x.reason, how: x.text }));
+      const byKey = {}; for (const x of w.diff) byKey[x.key] = x;
       const esc = v => /[",\n]/.test(String(v == null ? "" : v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v == null ? "" : v);
-      const head = ["Region", "SKU", "Item", "Month", "Released cases", "Proposed cases", "Difference", "Type", "Ref", "Reason", "How"];
-      const lines = [head.join(",")].concat(rows.map(x => [x.region, x.sku, x.item, x.month, x.released, x.proposed, x.d, x.type, x.ref, x.reason, x.how].map(esc).join(",")));
-      for (const h of w.holds) lines.push(["", "", "", "", "", "", "", "open question", h.ref, h.text, ""].map(esc).join(","));
-      for (const s of w.scenarios) { const [r, sku, m] = s.key.split("|"); lines.push([regionName(r), sku, ITEMS[sku].name, m, s.released, s.would, s.d, "scenario (not in plan)", s.ref, s.reason, s.text].map(esc).join(",")); }
-      return { base: w.base && { id: w.base.id, name: w.base.name, date: w.base.date }, rows, holds: w.holds, scenarios: w.scenarios, superseded: w.superseded, csv: lines.join("\n") + "\n" };
+      const r2 = v => v == null ? "" : Math.round(v * 100) / 100;
+      const lines = [["Region", "SKU", "Item", "Month", "Cases", "Published cases", "Change since publishing", "Why it changed"].join(",")];
+      let count = 0;
+      for (const r of D.regions) for (const it of D.items) for (const m of w.months) {
+        const v = (w.grid[r.code + "|" + it.sku] || {})[m]; if (v == null) continue;
+        const x = byKey[`${r.code}|${it.sku}|${m}`]; count++;
+        lines.push([r.name, it.sku, it.name, m, r2(v), x ? r2(x.released) : r2(v), x ? r2(x.d) : "", x ? x.reason : ""].map(esc).join(","));
+      }
+      return { base: w.base && { id: w.base.id, name: w.base.name, date: w.base.date }, rows, count, months: w.months, superseded: w.superseded, csv: lines.join("\n") + "\n" };
     }
 
     /* ---------------------------------------------------------------- assistant */
@@ -828,8 +829,6 @@
         planInForce: w.base ? { id: w.base.id, name: w.base.name, date: w.base.date, role: w.base.role } : null,
         months, plan,
         diff: w.diff.map(x => ({ key: x.key, released: x.released, proposed: x.proposed, d: x.d, how: x.text, reason: x.reason, changes: x.changes.map(c => c.id) })),
-        holds: w.holds.map(h => ({ id: h.id, ref: h.ref, date: h.date, text: h.text, source: h.source })),
-        scenarios: w.scenarios.map(s => ({ id: s.id, ref: s.ref, key: s.key, date: s.date, text: s.text, released: s.released, would: s.would, reason: s.reason })),
         superseded: w.superseded,
         changes: ch, decisions: dec,
         versions: versionsAll.filter(v => v.date <= T).map(v => ({ id: v.id, name: v.name, date: v.date, cycle: v.cycle, role: v.role, status: v.status, note: v.note || undefined })),

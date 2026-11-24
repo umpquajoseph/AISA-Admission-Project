@@ -24,7 +24,7 @@ About 6 minutes. October is made up from the real September files and says so on
 | 8 | **Next: late news** → **Next day ▶** three times, to Mon Oct 12 → open *November harvest feature - spiced pear* → **Log a change** → `600`, **bottles** → **Save change** | "It converts 600 bottles to 100 cases. The calendar entry for the same promotion closes with it." |
 | 9 | **Submanager view ↗** at the top right (opens the submanager page in a new tab) → **Gulf Coast** → drag `C:\AISA\synthetic\Harbor 2026-10 roll.xlsx` onto the drop zone → **Send sheet** → a late request → **Next: done** | "A submanager has a short path of their own: region, sheet, late request, done." |
 | 10 | Back to the first tab (head manager) → **Late news** | "What they sent is here. The request opens with their numbers filled in." |
-| 11 | **Next: send to purchasing** → **Download the list for purchasing** | "One list for purchasing: what changed since publishing, and why. Open questions and what-ifs change no numbers." |
+| 11 | **Next: send to purchasing** → **Download the plan for purchasing** | "Purchasing gets the whole plan in force. Every line I changed since publishing shows the published number, the change and why." |
 | 12 | Click the date at the top → pick **Fri, Sep 18** → **Publish** step | "On the six real September sheets this lands within 5% of Dutch Bros' own posted plan on 745 of 864 lines." |
 
 History and Ask sit at the top right. Each has a Back button to the step you came from.

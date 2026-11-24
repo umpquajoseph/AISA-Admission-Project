@@ -121,7 +121,7 @@ function context() {
   const got = cyc ? D.regions.filter(r => desk.latestSheet(S.date, r.code, cyc)) : [];
   const pub = cyc ? R.versions.filter(v => v.cycle === cyc && v.date <= S.date).pop() || null : null;
   const late = lateSheets(pub), news = newsLists();
-  news.count = news.open.length + late.filter(x => x.open.length).length;
+  news.count = news.open.length + late.filter(x => x.pending).length;
   return { cyc, rv, got, missing: D.regions.filter(r => !got.includes(r)), pub, late, news, month: cyc ? mname(cyc) : "" };
 }
 function renderPage() {
@@ -171,7 +171,7 @@ function pageSheets(X) {
     const s = cyc && desk.latestSheet(S.date, r.code, cyc), n = !X.pub && rv.openBy ? rv.openBy[r.code] || 0 : 0;
     if (!s) return `<div class="rbox wait"><b>${esc(r.name)}</b><span>not in yet</span></div>`;
     return `<button class="rbox ${n ? "warn" : "ok"}" data-region="${r.code}"><b>${esc(r.name)}</b><span>sent ${dlabel(s.date)}${s.replaces ? " · corrected copy" : ""}</span>
-      <span class="state">${X.pub ? ((X.late.find(x => x.sheet.id === s.id) || { open: [] }).open.length ? `new copy: see Late news` : "in the published plan") : n ? `${plural(n, "line")} to check` : "nothing to check"}</span></button>`;
+      <span class="state">${X.pub ? ((X.late.find(x => x.sheet.id === s.id) || {}).pending ? `new copy: see Late news` : "in the published plan") : n ? `${plural(n, "line")} to check` : "nothing to check"}</span></button>`;
   };
   const removed = (R.removed || []);
   $("page").innerHTML = `
@@ -224,7 +224,7 @@ function pageSheet(X) {
   }).join("");
   const edited = Object.values(s.cells).filter(c => c.edited);
   $("page").innerHTML = `
-    ${head(`${esc(regName(code))} · ${X.month} sheet`, `Sent ${dlabel(s.date)}${s.author ? ` by ${esc(s.author)}` : ""}${prev ? `, replacing the ${dlabel(prev.date)} copy` : ""}. Every number is in cases. Click a number to correct it.`)}
+    ${head(`${esc(regName(code))} · ${X.month} sheet`, `Sent ${dlabel(s.date)}${s.author ? ` by ${esc(s.author)}` : ""}${prev ? `, replacing the ${dlabel(prev.date)} copy` : ""}. It asks for ${months.length} months ahead, ${mlabel(months[0])} to ${mlabel(months[months.length - 1])}, every number in cases. Click a number to correct it.`)}
     ${X.pub ? `<div class="okline">The ${X.month} plan was published ${dlabel(X.pub.date)}. A correction here no longer changes it; change the plan itself under Publish.</div>` : open.length ? `<div class="tocheck"><b>${plural(open.length, "line")} to check</b><ul>${open.map(l => `<li class="jump" ${l.sku ? `data-jump="${esc(l.key)}"` : ""}>${l.sku ? `${esc(itemName(l.sku))}, ${mlabel(l.month)}` : `Row ${l.row}`}: ${esc(l.why)}</li>`).join("")}</ul></div>` : `<div class="okline">Nothing on this sheet needs checking.</div>`}
     <div class="legend"><span><i class="key check"></i>to check</span><span><i class="key problem"></i>could not be read</span><span><i class="key edited"></i>your correction</span>${s.counts.carried ? `<span><i class="key carried"></i>blank, carried from last month</span>` : ""}${prev ? `<span><i class="key changed"></i>changed from the earlier copy</span>` : ""}</div>
     <div class="gridwrap"><table class="grid sheet"><tr><th class="l">Item</th><th class="l">Sent in</th>${months.map(m => `<th>${mlabel(m)}</th>`).join("")}</tr>${rows}</table></div>
@@ -331,7 +331,7 @@ function pagePublish(X) {
   const pre = pv.draft && pv.draft.preflight;
   const preText = pre ? [pre.unsettled && `${plural(pre.unsettled, "line")} not checked, across all months, go in as asked`, pre.missing.length && `no sheet yet from ${pre.missing.map(x => regName(x.region || x)).join(", ")}: last plan stands`].filter(Boolean).join(" · ") : "";
   $("page").innerHTML = `
-    ${head(pv.draft ? `${X.month} plan, not published` : esc(pv.name), pv.draft ? "The sheets plus your checks, in cases. Click a region's number to see where it came from. Publish to make it the plan in force." : `The plan in force${X.pub ? `, published ${dlabel(X.pub.date)}` : ""}. Click a region's number to see where it came from or to change it.`)}
+    ${head(pv.draft ? `${X.month} plan, not published` : esc(pv.name), pv.draft ? `The sheets plus your checks, in cases, for ${mlabel(pv.months[0])} to ${mlabel(pv.months[pv.months.length - 1])}. Click a region's number to see where it came from. Publish to make it the plan in force.` : `The plan in force${X.pub ? `, published ${dlabel(X.pub.date)}` : ""}. Click a region's number to see where it came from or to change it.`)}
     <div class="row"><div class="seg">${pv.months.map(x => `<button class="${x === m ? "on" : ""}" data-month="${x}">${mlabel(x)}</button>`).join("")}</div>
       <div class="legend">${changed ? `<span><i class="key changed"></i>${changed} changed in ${mname(m)} since publishing</span>` : ""}${flagged ? `<span><i class="key flag"></i>${flagged} not checked in ${mname(m)}</span>` : ""}</div></div>
     ${ak ? `<div class="answer" data-toggle="answer"><span class="hint">Compared with Dutch Bros' own posted plan:</span> <b>${esc(ak.headline)}</b> <span class="hint">${S.open.answer ? "▾" : "▸"}</span></div>${S.open.answer ? answerHtml(ak) : ""}` : ""}
@@ -394,7 +394,7 @@ function startCellEdit(key, initial) {
   inp.onkeydown = e => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); finish(true); } if (e.key === "Escape") finish(false); e.stopPropagation(); };
   inp.onblur = () => finish(true);
 }
-const TYPES = [["add", "Add or take away"], ["set", "Change total to"], ["move", "Move to month"], ["scenario", "What-if only"]];
+const TYPES = [["add", "Add or take away"], ["set", "Change total to"], ["move", "Move to month"]];
 function detailHtml(key, pv) {
   const [r, sku, m] = key.split("|"), it = ITEMS[sku], li = desk.lineInfo(S.date, key);
   const v = pv.grid[r + "|" + sku] && pv.grid[r + "|" + sku][m];
@@ -407,7 +407,7 @@ function detailHtml(key, pv) {
     <div class="hint">${esc(it.case_pack)} · ${it.lead_days} days to arrive</div>
     ${pv.draft ? `<div class="hint" style="margin-top:6px">To change it before publishing, type a new number over it, or decide it under Check.</div>` : `<form class="dform" id="dForm">
       <div class="seg small">${TYPES.map(([t, n]) => `<button type="button" class="${dr.type === t ? "on" : ""}" data-type="${t}">${n}</button>`).join("")}</div>
-      <div class="row"><input type="number" step="any" id="dQty" value="${dr.qty}" placeholder="${dr.type === "set" ? "total" : dr.type === "move" ? "cases" : "+ or −"}">
+      <div class="row"><input type="number" step="any" id="dQty" value="${dr.qty}" placeholder="${dr.type === "set" ? "total" : dr.type === "move" ? "all of them" : "+ or −"}">
         ${dr.type === "move" ? `<span>to</span><select id="dTo">${pv.months.filter(x => x !== m).map(x => `<option value="${x}" ${dr.to === x ? "selected" : ""}>${mlabel(x)}</option>`).join("")}</select>`
         : `<select id="dUnit"><option value="CS" ${dr.unit === "CS" ? "selected" : ""}>cases</option><option value="EA" ${dr.unit === "EA" ? "selected" : ""}>${esc(units(sku))}</option></select>`}</div>
       <div class="hint" id="dCalc"></div>
@@ -435,17 +435,17 @@ function bindDetail(pv) {
   S.draft = S.draft && S.draft.key === key ? S.draft : null;
   const state = () => ({ key, type: f.querySelector(".seg .on").dataset.type, qty: $("dQty").value, unit: $("dUnit") ? $("dUnit").value : "CS", to: $("dTo") ? $("dTo").value : null, reason: $("dReason").value });
   const calc = () => {
-    const s = state(), q = parseFloat(s.qty);
+    const s = state(), q = s.type === "move" && s.qty === "" ? cur : parseFloat(s.qty);
     if (isNaN(q)) { $("dCalc").textContent = ""; return; }
     const cs = s.unit === "EA" ? q / it.ea_per_case : q, conv = s.unit === "EA" ? `${fmt(q)} ${units(sku)} ÷ ${it.ea_per_case} = ${fmt(cs)} cases · ` : "";
-    $("dCalc").textContent = s.type === "add" ? `${conv}${fmt(cur)} → ${fmt(cur + cs)}` : s.type === "set" ? `${conv}set to ${fmt(cs)}` : s.type === "move" ? `${mlabel(m)} ${fmt(cur)} → ${fmt(cur - cs)}` : `${conv}what-if: would be ${fmt(cur + cs)}`;
+    $("dCalc").textContent = s.type === "add" ? `${conv}${fmt(cur)} → ${fmt(cur + cs)}` : s.type === "set" ? `${conv}set to ${fmt(cs)}` : `${s.qty === "" ? "all " : ""}${mlabel(m)} ${fmt(cur)} → ${fmt(cur - cs)}`;
   };
   f.oninput = calc; calc();
   f.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { S.draft = { ...state(), type: b.dataset.type }; renderPage(); });
   const dc = $("dCancel"); if (dc) dc.onclick = () => { S.draft = null; renderPage(); focusSel(); };
   f.onsubmit = e => {
     e.preventDefault();
-    const s = state(), q = parseFloat(s.qty);
+    const s = state(), q = s.type === "move" && s.qty === "" ? cur : parseFloat(s.qty);
     if (isNaN(q)) return $("dQty").focus();
     if (!s.reason.trim()) { $("dReason").focus(); $("dReason").classList.add("need"); return; }
     R.changes.push({ id: uid("c"), date: S.date, type: s.type, ref: `manual:${key}`, key, qty: q, unit: s.type === "move" ? "CS" : s.unit, to: s.to, reason: s.reason.trim(), source: null, quote: "" });
@@ -493,9 +493,9 @@ function pageNews(X) {
   };
   $("page").innerHTML = `
     ${head("Late news", `Emails, submanager requests and calendar entries since the last plan. Open each one: log the change it asks for, or mark it no change needed.`)}
-    ${S.flash && S.flash.tab === "news" ? `<div class="flash">${esc(S.flash.text)} <span class="hint">It is in History and under Send to purchasing.</span></div>` : ""}
+    ${S.flash && S.flash.tab === "news" ? `<div class="flash">${esc(S.flash.text)} <span class="hint">${S.flash.change ? "It is in History and under Send to purchasing." : "It is in History."}</span></div>` : ""}
     ${X.late.map(lateHtml).join("")}
-    <div class="mlist">${N.open.map(t => row(t, false)).join("") || (X.late.some(x => x.open.length) ? "" : `<div class="okline">Nothing open. Use Next day ▶ at the top to see what arrives later.</div>`)}</div>
+    <div class="mlist">${N.open.map(t => row(t, false)).join("") || (X.late.some(x => x.pending) ? "" : `<div class="okline">Nothing open. Use Next day ▶ at the top to see what arrives later.</div>`)}</div>
     ${N.waiting.length ? `<h2>Waiting on someone (${N.waiting.length})</h2><div class="mlist">${N.waiting.map(t => row(t, true)).join("")}</div>` : ""}
     ${N.other.length ? `<div class="more"><button class="btn link" data-toggle="other">${S.open.other ? "▾" : "▸"} Dock and orders (${N.other.length})</button>${S.open.other ? `<div class="mlist">${N.other.map(t => row(t, false)).join("")}</div>` : ""}</div>` : ""}`;
   bindNews();
@@ -511,13 +511,21 @@ function lateSheets(pub) {
     const lines = Object.entries(s.cells).map(([key, c]) => { const [, sku, m] = key.split("|"); return { key, sku, month: m, cell: c, was: prev ? (prev.cells[key] || {}).cs ?? null : null, plan: (w.grid[r.code + "|" + sku] || {})[m] ?? null }; })
       .filter(l => l.cell.cs != null && l.plan != null && (prev ? l.was !== l.cell.cs : l.plan !== l.cell.cs));
     const taken = l => R.decisions.some(d => d.target === `line:${s.id}|${l.key}` && d.date <= S.date) || R.changes.some(c => c.source === s.id && c.key === l.key && !c.removed_on && c.date <= S.date);
-    out.push({ sheet: s, prev, lines, open: lines.filter(l => !taken(l)) });
+    const open = lines.filter(l => !taken(l)), seen = R.decisions.some(d => d.target === s.id && d.date <= S.date);
+    out.push({ sheet: s, prev, lines, open, same: !lines.length, pending: open.length > 0 || (!lines.length && !seen) });
   }
   return out;
 }
 function lateHtml(x) {
   const s = x.sheet, id = "late:" + s.id, open = x.open.length && (S.open[id] === true || (S.open[id] !== false && x.open.length <= 10));
-  if (!x.open.length) return "";
+  if (!x.pending) return "";
+  const note = s.meta && s.meta.note || s.note;
+  if (x.same) return `<div class="mlist" style="margin-bottom:var(--m)"><div class="mrow open">
+    <div class="mhead"><span class="pill sheet">Sheet</span><b>${esc(regName(s.region))} sent ${x.prev ? "a new copy of its" : "its"} ${mname(s.cycle)} sheet after you published</b><span class="hint">same numbers as the plan · ${dlabel(s.date)}</span></div>
+    <div class="mbody">${note ? `<div class="msg"><pre>${esc(note)}</pre></div>` : ""}
+      <div>No line differs${x.prev ? ` from the ${dlabel(x.prev.date)} copy` : " from the plan"}, so nothing in the plan changes.</div>
+      <div class="acts"><button class="btn small primary" data-latesame="${esc(s.id)}">Got it</button><a class="lnk" data-goto="sheet:${esc(s.id)}">Open the sheet</a></div></div>
+  </div></div>`;
   return `<div class="mlist" style="margin-bottom:var(--m)"><div class="mrow ${open ? "open" : ""}">
     <div class="mhead" data-latetoggle="${esc(id)}"><span class="pill sheet">Sheet</span><b>${esc(regName(s.region))} sent ${x.prev ? "a new copy of its" : "its"} ${mname(s.cycle)} sheet after you published</b><span class="hint">${plural(x.open.length, "line")} ${x.open.length === 1 ? "differs" : "differ"} · ${dlabel(s.date)}</span><span class="chev">${open ? "▾" : "▸"}</span></div>
     ${open ? `<div class="mbody">${s.meta && s.meta.note || s.note ? `<div class="msg"><pre>${esc(s.note || s.meta.note)}</pre></div>` : ""}
@@ -542,6 +550,9 @@ function bindNews() {
   };
   document.querySelectorAll("[data-latetoggle]").forEach(b => b.onclick = () => { const k = b.dataset.latetoggle; S.open[k] = !b.closest(".mrow").classList.contains("open"); renderPage(); });
   document.querySelectorAll("[data-takeline]").forEach(b => b.onclick = () => { const [sid, key] = split(b.dataset.takeline); take(sid, [key]); });
+  document.querySelectorAll("[data-latesame]").forEach(b => b.onclick = () => { const id = b.dataset.latesame, x = late.find(x => x.sheet.id === id);
+    R.decisions.push({ id: uid("d"), date: S.date, target: id, outcome: "no-change", note: "Same numbers as before" });
+    S.flash = { tab: "news", text: `${regName(x.sheet.region)}'s ${dlabel(x.sheet.date)} sheet: same numbers, no change needed.` }; commit(); });
   document.querySelectorAll("[data-takeall]").forEach(b => b.onclick = () => { const x = late.find(x => x.sheet.id === b.dataset.takeall); take(x.sheet.id, x.open.map(l => l.key)); });
   document.querySelectorAll("[data-keepline]").forEach(b => b.onclick = () => { const [sid, key] = split(b.dataset.keepline); R.decisions.push({ id: uid("d"), date: S.date, target: `line:${sid}|${key}`, outcome: "keep", note: "Kept the plan" }); commit(); });
   document.querySelectorAll("[data-work]").forEach(b => b.onclick = () => {
@@ -562,42 +573,40 @@ function bindNews() {
     df.onsubmit = e => {
       e.preventDefault(); const note = $("decNote").value.trim();
       S.flash = { tab: "news", text: `${threadTitle(S.pending.target)}: ${S.pending.outcome === "waiting" ? "waiting on someone" : "no change needed"}.` + decideThread(S.pending.target, S.pending.outcome, note) };
-      if (S.pending.outcome === "waiting") R.changes.push({ id: uid("c"), date: S.date, type: "hold", ref: S.pending.target, key: "", reason: note || threadTitle(S.pending.target), source: S.pending.target });
       S.pending = null; commit();
     };
     $("decCancel").onclick = () => { S.pending = null; renderPage(); };
   }
 }
 /* the change card: one typed change, filled by hand or by the assistant, saved against a message */
-const CTYPES = [["add", "Add or take away"], ["set", "Change total to"], ["move", "Move to month"], ["hold", "Open question"], ["scenario", "What-if only"]];
+const CTYPES = [["add", "Add or take away"], ["set", "Change total to"], ["move", "Move to month"]];
 function newCard(th, init = {}) {
   const plan = desk.planAt(S.date), months = plan ? plan.months : [];
   return { thread: th.id, ref: th.kind === "calendar" ? th.id.replace(/^cal:/, "") : th.id, type: "add", region: th.region || D.regions[0].code, sku: guessSku(th) || D.items[0].sku, month: guessMonth(th) || months[0], qty: "", unit: "CS", to: null, reason: th.title, quote: "", ...init };
 }
 function cardCalc(c) {
-  if (c.type === "hold") return "An open question for purchasing. No numbers change.";
-  const q = parseFloat(c.qty); if (isNaN(q)) return "";
   const it = ITEMS[c.sku], w = desk.working(S.date), cur = (w.grid[c.region + "|" + c.sku] || {})[c.month];
+  const q = moveAll(c) ? cur : parseFloat(c.qty); if (q == null || isNaN(q)) return "";
   const cs = c.unit === "EA" ? q / it.ea_per_case : q, conv = c.unit === "EA" ? `${fmt(q)} ${units(c.sku)} ÷ ${it.ea_per_case} = ${fmt(cs)} cases · ` : "";
   if (cur == null) return `${conv}${regName(c.region)} has no plan line for this item`;
   if (c.type === "add") return `${conv}${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur + cs)}`;
   if (c.type === "set") { const prev = R.changes.filter(x => x.ref === c.ref && x.key === `${c.region}|${c.sku}|${c.month}` && !x.removed_on).pop(); return `${conv}${prev ? `replaces the earlier ${fmt(prev.qty)} ${unitWord(c.sku, prev.unit)}` : `${mlabel(c.month)} becomes ${fmt(cs)}`}`; }
-  if (c.type === "move") return `${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur - cs)} · ${mlabel(c.to || "")} +${fmt(cs)}`;
-  return `${conv}what-if only: would be ${fmt(cur + cs)}, the plan stays ${fmt(cur)}`;
+  return `${moveAll(c) ? "all of " : ""}${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur - cs)} · ${mlabel(c.to || "")} +${fmt(cs)}`;
 }
+const moveAll = c => c.type === "move" && String(c.qty).trim() === "";
 function changeCardHtml(c = S.cc, idx = null) {
   const plan = desk.planAt(S.date), months = plan ? plan.months : [], k = idx == null ? "" : idx;
   return `<form class="ccard ${c.ai ? "ai" : ""}" data-card="${k}">
     ${c.ai ? `<div class="hint">Drafted by the assistant. Nothing changes until you approve it.</div>` : ""}
     <div class="seg small">${CTYPES.map(([t, n]) => `<button type="button" class="${c.type === t ? "on" : ""}" data-ctype="${t}">${n}</button>`).join("")}</div>
-    ${c.type === "hold" ? "" : `<div class="row">
+    <div class="row">
       <select data-f="region">${D.regions.map(r => `<option value="${r.code}" ${r.code === c.region ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
       <select data-f="sku">${D.items.map(i => `<option value="${i.sku}" ${i.sku === c.sku ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select>
       <select data-f="month">${months.map(m => `<option value="${m}" ${m === c.month ? "selected" : ""}>${mlabel(m)}</option>`).join("")}</select>
-      <input type="number" step="any" data-f="qty" value="${esc(c.qty)}" placeholder="${c.type === "set" ? "total" : "how many"}" style="width:90px">
+      <input type="number" step="any" data-f="qty" value="${esc(c.qty)}" placeholder="${c.type === "set" ? "total" : c.type === "move" ? "all of them" : "how many"}" style="width:90px">
       ${c.type === "move" ? `<span>to</span><select data-f="to">${months.filter(m => m !== c.month).map(m => `<option value="${m}" ${m === c.to ? "selected" : ""}>${mlabel(m)}</option>`).join("")}</select>`
         : `<select data-f="unit"><option value="CS" ${c.unit === "CS" ? "selected" : ""}>cases</option><option value="EA" ${c.unit === "EA" ? "selected" : ""}>${esc(units(c.sku))}</option></select>`}
-    </div>`}
+    </div>
     <input type="text" data-f="reason" value="${esc(c.reason)}" placeholder="Why (purchasing reads this)">
     ${c.quote ? `<div class="quote">“${esc(c.quote)}”</div>` : ""}
     ${c.checks && c.checks.length ? `<div class="warn-text">${c.checks.map(esc).join(" · ")}</div>` : ""}
@@ -613,10 +622,12 @@ function bindChangeCard() {
     f.onsubmit = e => {
       e.preventDefault();
       const c = get();
-      if (c.type !== "hold" && isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
+      const cur = (desk.working(S.date).grid[c.region + "|" + c.sku] || {})[c.month];
+      if (moveAll(c)) c.qty = cur;
+      if (isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
       const calcText = cardCalc(c);
-      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: c.type === "hold" ? "" : `${c.region}|${c.sku}|${c.month}`, qty: c.type === "hold" ? null : +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
-      S.flash = { tab: "news", text: `Saved: ${c.type === "hold" ? "open question" : `${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}`}.` + decideThread(c.thread, c.type === "hold" ? "waiting" : "changed", c.reason, c.ref, c.type === "hold" ? null : c.month) };
+      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: `${c.region}|${c.sku}|${c.month}`, qty: +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai, ...(c.replaces ? { replaces: c.replaces } : {}) });
+      S.flash = { tab: "news", change: true, text: `Saved: ${regName(c.region)}, ${itemName(c.sku)} ${mlabel(c.month)}, ${calcText}.` + decideThread(c.thread, "changed", c.reason, c.ref, c.month) };
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
       commit();
     };
@@ -652,19 +663,18 @@ function guessMonth(th) {
 function pageSend(X) {
   const back = { label: "Late news", act: () => go("news") };
   if (!X.pub) {
-    $("page").innerHTML = head("Send to purchasing", `Purchasing gets one list once the ${X.month} plan is published. It is not published yet.`);
+    $("page").innerHTML = head("Send to purchasing", `Purchasing gets the ${X.month} plan once it is published. It is not published yet.`);
     foot({ back, main: { label: `Go to publish`, act: () => go("publish") } }); return;
   }
   const rl = desk.releaseList(S.date), rows = rl.rows, net = rows.reduce((t, x) => t + x.d, 0);
   const keyOf = x => `${D.regions.find(r => r.name === x.region).code}|${x.sku}|${x.month}`;
+  const file = `${X.month.toLowerCase()}-plan-for-purchasing-${S.date}.csv`, span = `${mlabel(rl.months[0])} to ${mlabel(rl.months[rl.months.length - 1])}`;
   $("page").innerHTML = `
-    ${head("Send to purchasing", `One list for purchasing: every change to the ${esc(rl.base.name)} since it was published on ${dlabel(rl.base.date)}, with the reason. Open questions and what-ifs are listed but change no numbers.`)}
-    <p class="sum">${rows.length ? `<b>${plural(rows.length, "line")} changed</b>, ${sign(Math.round(net))} cases in all.` : "<b>No changes since publishing.</b>"}${rl.holds.length ? ` ${plural(rl.holds.length, "open question")}.` : ""}${rl.scenarios.length ? ` ${plural(rl.scenarios.length, "what-if")}.` : ""}</p>
+    ${head("Send to purchasing", `Purchasing gets the ${esc(rl.base.name)} as it stands today: all ${fmt(rl.count)} lines, ${span}, in cases. Lines you changed since publishing on ${dlabel(rl.base.date)} show the published number, the change and why.`)}
+    <p class="sum">${rows.length ? `<b>${plural(rows.length, "line")} changed since publishing</b>, ${sign(Math.round(net))} cases in all.` : "<b>No changes since publishing.</b> The file matches the published plan."}</p>
     ${rows.length ? `<table class="plain review"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Published</th><th class="n">Now</th><th class="n">Change</th><th>Why</th><th>How</th></tr>
-      ${rows.map(x => `<tr><td>${esc(x.region)}</td><td><a data-goto="plan:${keyOf(x)}">${esc(x.item)}</a></td><td>${mlabel(x.month)}</td><td class="n">${fmt(x.released)}</td><td class="n"><b>${fmt(x.proposed)}</b></td><td class="n ${x.d > 0 ? "up" : "down"}">${sign(x.d)}</td><td class="why" title="${esc(x.reason)}">${esc(x.reason)}</td><td class="hint">${esc(x.how)}</td></tr>`).join("")}</table>` : ""}
-    ${rl.holds.length ? `<h2>Open questions</h2><ul class="plainlist">${rl.holds.map(h => `<li>${esc(h.text)} <span class="hint">${esc(h.ref && !/^thread:|^cal:/.test(h.ref) ? h.ref + " · " : "")}${dlabel(h.date)}</span></li>`).join("")}</ul>` : ""}
-    ${rl.scenarios.length ? `<h2>What-ifs, not in the plan</h2><table class="plain review"><tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Plan</th><th class="n">Would be</th><th>Why</th></tr>${rl.scenarios.map(x => { const [r, sku, m] = x.key.split("|"); return `<tr><td>${esc(regName(r))}</td><td>${esc(itemName(sku))}</td><td>${mlabel(m)}</td><td class="n">${fmt(x.released)}</td><td class="n">${fmt(x.would)}</td><td class="why">${esc(x.reason)}</td></tr>`; }).join("")}</table>` : ""}`;
-  foot({ back, note: S.sent === S.date ? `Saved purchasing-${S.date}.csv to your downloads folder. Send it to purchasing.` : X.news.count ? `${plural(X.news.count, "item")} in Late news still open, not in this list` : "", main: { label: "Download the list for purchasing", act: () => { download(`purchasing-${S.date}.csv`, rl.csv, "text/csv"); S.sent = S.date; renderPage(); } } });
+      ${rows.map(x => `<tr><td>${esc(x.region)}</td><td><a data-goto="plan:${keyOf(x)}">${esc(x.item)}</a></td><td>${mlabel(x.month)}</td><td class="n">${fmt(x.released)}</td><td class="n"><b>${fmt(x.proposed)}</b></td><td class="n ${x.d > 0 ? "up" : "down"}">${sign(x.d)}</td><td class="why" title="${esc(x.reason)}">${esc(x.reason)}</td><td class="hint">${esc(x.how)}</td></tr>`).join("")}</table>` : ""}`;
+  foot({ back, note: S.sent === S.date ? `Saved ${file} to your downloads folder. Send it to purchasing.` : X.news.count ? `${plural(X.news.count, "item")} in Late news still open, not in this plan` : "", main: { label: "Download the plan for purchasing", act: () => { download(file, rl.csv, "text/csv"); S.sent = S.date; renderPage(); } } });
 }
 
 /* ================================================================ Add by hand: paste, drop, file, folder */
@@ -826,7 +836,7 @@ function logEntries(T) {
       let changed = 0; if (prev) for (const [k, c] of Object.entries(x.cells)) if (!prev.cells[k] || prev.cells[k].cs !== c.cs) changed++;
       out.push({ date: x.date, kind: "sheet", text: `<b>${esc(regName(x.region))}</b> sent its ${mlong(x.cycle)} sheet${prev ? `, replacing the ${dlabel(prev.date)} copy (${plural(changed, "line")} changed)` : ""}. ${x.counts.cells} lines, ${x.counts.ea} converted to cases, ${x.counts.carried} carried forward${x.problems.length ? `, <span class="warn-text">${plural(x.problems.length, "line")} unreadable</span>` : ""}.${x.origin === "added" ? " Added here." : ""} <a data-goto="sheet:${esc(x.id)}">See the sheet</a>`, why: x.meta && x.meta.note });
     } else if (x.kind === "plan") {
-      const r = x.release, verb = { Posted: "posted; it became the plan in force", Withdrawn: "saved, then withdrawn", Working: "saved as a working draft", Scenario: "saved as a what-if; never the plan in force" }[r.disposition] || r.disposition;
+      const r = x.release, verb = { Posted: "posted; it became the plan in force", Withdrawn: "saved, then withdrawn", Working: "saved as a working draft", Scenario: "saved as a side scenario; never the plan in force" }[r.disposition] || r.disposition;
       out.push({ date: x.date, kind: "plan", text: `Plan file <b>${esc(short(r.file).replace(/\.xlsx$/, ""))}</b> ${verb}.`, why: r.note });
     } else if (x.kind === "email") out.push({ date: x.date, time: x.time, kind: "msg", text: `${x.from === "manager" ? "Request" : "Email"} from ${esc(who(x))}: <b>${esc(x.mail.subject)}</b>${x.origin === "added" && x.from !== "manager" ? " (added here)" : ""}`, body: x.mail.body });
     else if (x.kind === "calendar") out.push({ date: x.date, kind: "msg", text: `Calendar: <b>${esc(x.event.id)}</b> ${esc(x.event.type)}, ${esc(x.event.status.toLowerCase())}`, why: x.event.detail });
@@ -835,10 +845,10 @@ function logEntries(T) {
     const [r, sku, m] = e.key.split("|");
     out.push({ date: e.date, kind: "you", text: `You changed ${esc(regName(r))} · ${esc(itemName(sku))} · ${mlabel(m)} by <b>${sign(e.dv)}</b> cases. <a data-goto="plan:${e.key}">Open</a>`, why: e.reason });
   }
-  for (const c of R.changes.filter(c => c.date <= T)) {
+  for (const c of R.changes.filter(c => c.date <= T && ["add", "set", "move"].includes(c.type))) {
     const [r, sku, m] = (c.key || "||").split("|");
-    const what = c.type === "hold" ? `held an open question: ${esc(c.reason)}` : `${{ add: "added to", set: "set", move: "moved", scenario: "ran a what-if on" }[c.type]} ${esc(regName(r))} · ${esc(itemName(sku))} · ${mlabel(m)}${c.type === "move" ? " → " + mlabel(c.to) : ""}: ${fmt(c.qty)} ${unitWord(sku, c.unit)}`;
-    out.push({ date: c.date, kind: "you", text: `You ${what}.${c.source ? ` From: ${esc(srcName(c.source))}.` : ""}${c.key ? ` <a data-goto="plan:${c.key}">Open</a>` : ""}`, why: c.type === "hold" ? "" : c.reason });
+    const what = `${{ add: "added to", set: "set", move: "moved" }[c.type]} ${esc(regName(r))} · ${esc(itemName(sku))} · ${mlabel(m)}${c.type === "move" ? " → " + mlabel(c.to) : ""}: ${fmt(c.qty)} ${unitWord(sku, c.unit)}`;
+    out.push({ date: c.date, kind: "you", text: `You ${what}.${c.source ? ` From: ${esc(srcName(c.source))}.` : ""}${c.key ? ` <a data-goto="plan:${c.key}">Open</a>` : ""}`, why: c.reason });
     if (c.removed_on && c.removed_on <= T) out.push({ date: c.removed_on, kind: "you", text: `You undid a ${dlabel(c.date)} change (${esc(c.reason)}).` });
   }
   for (const e of (R.reportEdits || []).filter(e => e.date <= T)) {
@@ -932,7 +942,7 @@ function histCompare() {
 
 /* ================================================================ Ask (to the side) */
 function pageAsk() {
-  const examples = ["Why did Gulf Coast mango October change?", "What changed since the last published plan?", "What is still an open question?"];
+  const examples = ["Why did Gulf Coast mango October change?", "What changed since the last published plan?", "What is Late news still waiting on?"];
   const hist = S.asks || [];
   $("page").innerHTML = `<div class="ask">
     ${head("Ask", "Ask a question about the plan, a sheet, an email or a change. The answer comes only from this desk's record and names its source.")}
@@ -1033,7 +1043,7 @@ function mgrPreview(p) {
   if (p.looksLike && p.looksLike !== p.region) return `<div class="preview bad"><b>This looks like ${esc(regName(p.looksLike))}'s sheet, not ${esc(regName(p.region))}'s.</b><div>${esc(p.name)}: none of its item codes are on ${esc(regName(p.region))}'s list. Choose your own region's file, or go back and pick ${esc(regName(p.looksLike))}.</div><div class="acts"><button class="btn small" id="pvCancel">Choose a different file</button></div></div>`;
   let changed = 0; if (prev) for (const [k, c] of Object.entries(r.cells)) if (!prev.cells[k] || prev.cells[k].cs !== c.cs) changed++;
   return `<div class="preview">
-    <p><b>${esc(regName(p.region))} · ${mlong(p.cycle)} sheet</b>${prev ? `, replacing your ${dlabel(prev.date)} copy (${plural(changed, "line")} changed)` : ""}</p>
+    <p><b>${esc(regName(p.region))} · ${mlong(p.cycle)} sheet</b>${prev ? (changed ? `, replacing your ${dlabel(prev.date)} copy (${plural(changed, "line")} changed)` : `: the same numbers as your ${dlabel(prev.date)} copy`) : ""}</p>
     <p>${plural(r.counts.cells, "line")} read. ${r.counts.ea ? `${r.counts.ea} converted from bottles or bags to cases.` : ""} ${probs.length ? `<span class="warn-text">${plural(probs.length, "problem")}; the head manager will see ${probs.length === 1 ? "it" : "them"}.</span>` : `<span class="ok-text">Every line read.</span>`}</p>
     ${probs.length ? `<div class="problems">${probs.slice(0, 6).map(esc).join("<br>")}${probs.length > 6 ? `<br>and ${probs.length - 6} more` : ""}</div>` : ""}
     ${prev ? `<input type="text" id="pvNote" placeholder="What changed? (the head manager sees this)" style="width:100%;margin-top:6px">` : ""}
@@ -1049,10 +1059,8 @@ function workedExample() {
   const ch = (date, type, ref, key, qty, unit, reason, source, extra = {}) => rec.changes.push({ id: uid("c"), date, type, ref, key, qty, unit, reason, source, quote: "", ...extra });
   const mango = "thread:october mango request", kit = "thread:second opening / new dock week";
   ch("2026-09-14", "add", "GC-PROMO-01", "R06|S014|2026-10", 720, "EA", "Oct mango promo", mango);
-  ch("2026-09-15", "scenario", "Finance copy", "R05|S022|2026-11", 30, "CS", "Finance cup buffer", null);
   for (const [sku, q] of [["S001", 24], ["S005", 18], ["S014", 12]]) ch("2026-09-16", "move", "OP-FR-02", `R04|${sku}|2026-10`, q, "CS", "Opening kit moved to Nov 2", kit, { to: "2026-11" });
   ch("2026-09-17", "set", "GC-PROMO-01", "R06|S014|2026-10", 480, "EA", "Promo cut to 480 bottles", mango);
-  ch("2026-09-18", "hold", "CA-TEST-03", "", null, "CS", "Winter trial: no sites or quantities yet", "thread:cascadia menu test / field count");
   for (const [date, target] of [["2026-09-16", "cal:OP-FR-02"], ["2026-09-16", kit], ["2026-09-17", "cal:GC-PROMO-01"], ["2026-09-17", mango]]) rec.decisions.push({ id: uid("d"), date, target, outcome: "no-change", note: "Logged as a change" });
   rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter trial: no sites or quantities yet" });
   const done = new Set(rec.decisions.map(d => d.target));

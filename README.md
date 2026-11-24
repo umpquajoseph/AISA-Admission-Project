@@ -28,12 +28,13 @@ git-ignored `.dev.vars`; without it the AI buttons say "Assistant not connected"
 
 ## Screens
 
-| Tab | What it is for |
+| Step | What it is for |
 |---|---|
-| Inbox | Six region tiles (drop a sheet on one), plan messages, Log a change or Draft with AI |
-| Review | Only the lines that fail a check against shipments and sales, grouped by item |
-| Plan | The draft until published, then the plan in force; click a number for its story |
-| Release | Released vs proposed, why, open questions, scenarios; export for purchasing |
+| Sheets in | Six region boxes; open a sheet to see or correct what it asks for |
+| Check | Only the lines that fail a check against shipments and sales |
+| Publish | The draft until published, then the plan in force; click a number for its story |
+| Late news | Emails, submanager requests, calendar entries and late sheets; log each as a change |
+| Send to purchasing | The plan in force, every line, with changes since publishing marked; download as CSV |
 | History | Everything that happened; trends; compare versions |
 | Ask | Questions answered from the record, with sources |
 
