@@ -510,7 +510,7 @@
       const now = shopsIn(r, m), then = shopsIn(r, addM(m, -12));
       if (!now || !then) return null;
       const v = avg * now / then, span = mRange(months[0], months[months.length - 1]);
-      return { v, label: `ships ~${r0(v)}/mo`, method: `${span} avg × shops ${now}/${then}`, detail: `${seasonal ? "Seasonal item, same month last year" : "Same three months last year"} (${span}): ${fmt(avg)} cases a month shipped, × ${now}/${then} open shops = ${fmt(v)} cases.` };
+      return { v, label: `usually ships about ${r0(v)} a month`, method: `${span} avg × shops ${now}/${then}`, detail: `${seasonal ? "Seasonal item, same month last year" : "Same three months last year"} (${span}): ${fmt(avg)} cases a month shipped, × ${now}/${then} open shops = ${fmt(v)} cases.` };
     }
     /* expected cases from sales of the one drink with a portion standard (S001, S005, S014) */
     function expectSales(T, key) {
@@ -526,7 +526,7 @@
       if (!sUse || !g0 || months.some(x => !(x in use) || x > lc)) return null;
       const base = months.reduce((a, x) => a + use[x], 0) / months.length, k = sShip / sUse, g = g1 / g0, v = base * g * k;
       const drink = SALES_DRINK[sku] || "one drink";
-      return { v, label: `sales ~${r0(v)}/mo`, method: `${drink} sales ${pct(g - 1)} YoY`, detail: `${drink}, sold + comped, ${mRange(months[0], months[months.length - 1])}: ${fmt(base)} cases a month of this item. Sales ${pct(g - 1)} on a year ago (${mRange(rec[2], rec[0])}). × ${fmt(k)} cases shipped per sales-implied case (last 12 months) = ${fmt(v)} cases.` };
+      return { v, label: `sales point to about ${r0(v)} a month`, method: `${drink} sales ${pct(g - 1)} YoY`, detail: `${drink}, sold + comped, ${mRange(months[0], months[months.length - 1])}: ${fmt(base)} cases a month of this item. Sales ${pct(g - 1)} on a year ago (${mRange(rec[2], rec[0])}). × ${fmt(k)} cases shipped per sales-implied case (last 12 months) = ${fmt(v)} cases.` };
     }
 
     /* checks on a number for one line, as of T. last = the plan in force before this cycle */
@@ -543,7 +543,7 @@
       judge("sales", "Sales", expectSales(T, key));
       if (last != null) {
         const d = value - last, ok = !(Math.abs(d) >= OPT.swingMin && Math.abs(d) > OPT.swingTol * Math.max(last, 1));
-        out.push({ id: "swing", name: "Last plan", expected: last, d: r0(d), ok, label: `was ${fmt(last)}`, method: "change on last plan", detail: `Plan in force before this cycle: ${fmt(last)} cases. Flags beyond ±${Math.round(OPT.swingTol * 100)}% and ${OPT.swingMin} CS.` });
+        out.push({ id: "swing", name: "Last plan", expected: last, d: r0(d), ok, label: `last plan ${fmt(last)}`, method: "change on last plan", detail: `Plan in force before this cycle: ${fmt(last)} cases. Flags beyond ±${Math.round(OPT.swingTol * 100)}% and ${OPT.swingMin} CS.` });
       }
       return out;
     }
@@ -556,7 +556,8 @@
     }
     function reasonOf(value, checks) {
       const s = checks.find(c => c.id === "ship"), q = checks.find(c => c.id === "sales"), w = checks.find(c => c.id === "swing");
-      return [`Asks ${fmt(value)}`, s && s.label, q && q.label, w && !w.ok && w.label].filter(Boolean).join("; ");
+      const t = [s && s.label, q && q.label, w && !w.ok && w.label].filter(Boolean).join("; ") || `asks ${fmt(value)}`;
+      return t[0].toUpperCase() + t.slice(1);
     }
 
     /* ---------------------------------------------------------------- draft */

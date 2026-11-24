@@ -312,3 +312,9 @@ svg.chart .pt.sales { fill: var(--ok); }
   .foot { grid-template-columns: auto auto; }
   .footnote { display: none; }
 }
+
+/* one line saying what just happened, with Undo where it can be undone */
+.flash { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 8px var(--l); margin: 0 0 var(--m); max-width: 1100px; }
+.tocheck li.jump[data-jump] { cursor: pointer; color: var(--accent); }
+.tocheck li.jump[data-jump]:hover { text-decoration: underline; }
+.flash.quiet { border-left-color: var(--border); color: var(--hint); }

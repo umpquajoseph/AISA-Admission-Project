@@ -1,30 +1,35 @@
 # Demo script
 
-About 6 minutes. October is synthetic and labelled so on screen.
+About 6 minutes. October is made up from the real September files and says so on screen.
 
 ## Before
 
 1. In `C:\AISA`: `npm run dev`.
-2. Tab 1 (planner): http://127.0.0.1:8788/?example=1. September is done; you start on the Inbox.
-3. Tab 2 (manager): http://127.0.0.1:8788/?role=manager. Pick the region in its top-right box.
-4. The AI steps need `ANTHROPIC_API_KEY=...` in `C:\AISA\.dev.vars`.
+2. Clear the old record: in the browser console, `Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k))`.
+3. Tab 1, head manager: http://127.0.0.1:8788/?example=1. September is done; the day is Tue Oct 6.
+4. Tab 2 comes from **Submanager view ↗** at the top right of tab 1.
+5. The AI buttons need `ANTHROPIC_API_KEY=...` in `C:\AISA\.dev.vars`. Without it they say "Assistant not connected".
 
 ## Steps
 
-| # | Do | Say |
+| # | Click | Say |
 |---|---|---|
-| 1 | Header: click **Oct · synthetic** | "Real Dutch Bros files stop Sep 18. October is made up from them and labelled synthetic." |
-| 2 | Press **▶** to Oct 9; click a region box to open its sheet | "Six managers, four layouts, mixed units. The app reads them and converts bottles to cases. North Fork's 'tbc' shows as a problem; Mesa West's resend replaces its first file." |
-| 3 | Tab 2: drop a sheet or send a late request; switch back to tab 1 | "Managers send straight in. No middleman." |
-| 4 | **Review** tab | "864 lines, 833 as asked, 16 items need me. Each is checked against last year's shipments and sales." Settle three: **Use ask**, **Keep plan**, **Set…** (Front Range cold brew 2,140 is a typo; set ~214). |
-| 5 | **Plan** tab → **Publish**; click any number | "It warns if anything is unsettled. Every number shows where it came from, what was asked, the checks and every past version." |
-| 6 | **▶** to Oct 12; Inbox: open the spiced pear email → **Draft with AI** → **Approve** | "The AI drafts the change and quotes its sentence. Nothing applies until I approve." Oct 15: it replaces the 600, not adds. Oct 13 lemonade = Move, Oct 14 kiosk = Hold, Oct 16 cups = Scenario. |
-| 7 | **Release** tab → **Export for purchasing** | "Monday's buy review: released, proposed, why, the arithmetic. Open questions and scenarios stay out of the plan." |
-| 8 | **Ask** tab: "Why did spiced pear change?" | "It answers from the record only and names the source." |
-| 9 | Paste the interviewers' information in the Inbox **Add** box → **Add** → **Draft with AI** | |
-| 10 | Header **Sep** → **Plan** | "On the six real September sheets it lands within 5% of Dutch Bros' real posted plan on 745 of 864 lines; their planner pulls requests about a third of the way back to last month." |
+| 1 | Nothing yet: point at the five steps across the top | "Every month is the same five steps. Back and Next walk me through them." |
+| 2 | **Next day ▶** three times, to Fri Oct 9 (one day per click) | "Sheets arrive from the six regions. Each box says how many lines need me." |
+| 3 | **Cascadia** box | "Every number is in cases, even where the region wrote bottles. Orange needs a look." |
+| 4 | Black tea sachets, Feb '27, the red **“tbc”** → type `80` → Enter | "I can correct anything a region sends. It is logged, with Undo." |
+| 5 | **Check Cascadia's 1 line**, then **Check the other … lines** | "Only unusual lines come here, checked against last year's shipments and sales. Everything else goes in as asked." |
+| 6 | On three lines: **Use theirs**, **Keep last plan**, **Set…** | "Three choices. Anything I skip goes in as asked." |
+| 7 | **Next: publish** → click any number → **Publish the October plan** | "Each number shows what was asked, the checks and every past version." |
+| 8 | **Next: late news** → **Next day ▶** three times, to Mon Oct 12 → open *November harvest feature - spiced pear* → **Log a change** → `600`, **bottles** → **Save change** | "It converts 600 bottles to 100 cases. The calendar entry for the same promotion closes with it." |
+| 9 | Tab 2: **Gulf Coast** → drop `synthetic\Harbor 2026-10 roll.xlsx` → **Send sheet** → a late request → **Next: done** | "A submanager has a short path of their own: region, sheet, late request, done." |
+| 10 | Tab 1, **Late news** | "What they sent is here. The request opens with their numbers filled in." |
+| 11 | **Next: send to purchasing** → **Download the list for purchasing** | "One list for purchasing: what changed since publishing, and why. Open questions and what-ifs change no numbers." |
+| 12 | Click the date at the top → pick **Fri, Sep 18** → **Publish** step | "On the six real September sheets this lands within 5% of Dutch Bros' own posted plan on 745 of 864 lines." |
+
+History and Ask sit at the top right. Each has a Back button to the step you came from.
 
 ## Notes
 
-- Units: EA = each (one bottle or bag), CS = case. Everything in the plan is in cases.
-- Leave a page with the tab bar at the top.
+- A sheet sent after publishing shows under Late news, line by line, with **Use new number** or **Keep plan**.
+- Remove a sheet from its page under **File details and remove**. Restore it from **Sheets in → Removed**.
