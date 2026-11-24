@@ -1,0 +1,4 @@
+# Built by pipeline/make_synthetic.py from the packet; rebuild locally, like site/data.js
+*.xlsx
+*.eml
+*.csv

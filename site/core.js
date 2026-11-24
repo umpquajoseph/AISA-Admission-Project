@@ -65,7 +65,8 @@
   function readSheet(rows) {
     const [h, layout] = findHeader(rows);
     if (h < 0) return { error: "No request table found. The first column of the header row should read Stock no., Counter SKU or Stock alias." };
-    let author = null, hub = null, dated = null;
+    let author = null, hub = null, dated = null, synthetic = false;
+    for (let i = 0; i < h; i++) if (/synthetic/i.test(str(rows[i] && rows[i][0]))) synthetic = true;
     for (let i = 0; i < h; i++) {
       const m = str(rows[i] && rows[i][0]).match(/^(.+?)\s{2,}(.+?)\s{2,}(\d{4}-\d{2}-\d{2})/);
       if (m) { [, author, hub, dated] = m; break; }
@@ -88,7 +89,7 @@
         for (const [j, m] of mcols) add({ local: str(r[0]), month: m, unit: str(r[2]).toUpperCase(), note }, r[j], i + 1);
       }
     }
-    return { layout, author, hub, dated, entries, bad };
+    return { layout, author, hub, dated, entries, bad, synthetic };
   }
 
   /* which region and cycle a sheet belongs to, from its own contents */
@@ -194,7 +195,7 @@
     let date = null, time = null;
     const m = (H.date || "").match(/(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{1,2}):(\d{2})/);
     if (m) { date = `${m[3]}-${pad(MON.findIndex(x => x.toLowerCase() === m[2].toLowerCase()) + 1)}-${pad(+m[1])}`; time = `${pad(+m[4])}:${m[5]}`; }
-    return { date, time, sender: decodeWords(H.from || ""), to: decodeWords(H.to || ""), subject: decodeWords(H.subject || ""), body: (out.text || "").replace(/\r\n/g, "\n").trim(), attachments: out.attachments };
+    return { date, time, sender: decodeWords(H.from || ""), to: decodeWords(H.to || ""), subject: decodeWords(H.subject || ""), body: (out.text || "").replace(/\r\n/g, "\n").trim(), attachments: out.attachments, synthetic: !!H["x-synthetic"] };
   }
   /* pasted text that is not a sheet: an email with or without its header lines */
   function readPastedText(text) {
@@ -246,7 +247,7 @@
       inputs.push({ id: "email:" + e.file, kind: "email", date: m.date, time: m.time, origin: "packet", synthetic: true, src: e.file, mail: m, region: guessRegionFromText(m.sender + " " + m.subject + " " + m.body, ref) });
     }
     for (const ev of SY.events) inputs.push({ id: "cal:" + ev.id + "@" + ev.known_on, kind: "calendar", date: ev.known_on, time: "", origin: "packet", synthetic: true, src: "synthetic/calendar.csv", event: ev, region: ev.region });
-    for (const a of record.inputs) inputs.push({ ...a, origin: "added" });
+    for (const a of record.inputs) inputs.push({ ...a, origin: "added", synthetic: a.synthetic || !!(a.mail && a.mail.synthetic) });
     inputs.forEach((x, i) => {
       x.seq = i;
       // messages about one matter share a thread: an email subject without RE:/FW:, or a calendar event id
@@ -264,6 +265,7 @@
       const read = readSheet(x.rows);
       if (read.error) { x.error = read.error; continue; }
       x.read = read;
+      if (read.synthetic) x.synthetic = true;
       x.region = x.region || guessRegion(read, ref);
       x.cycle = x.cycle || guessCycle(read);
       const earlier = Object.keys(lastOf).filter(k => k.startsWith(x.region + "|") && k.split("|")[1] < x.cycle).sort().pop();
@@ -537,6 +539,13 @@
     function draft(T, cycle) {
       cycle = cycle || cycleAt(T); if (!cycle) return null;
       const pin = lastPlanFor(T, cycle), known = knownAt(T), months = cycleMonths(cycle);
+      // late news logged on the plan in force (adds and set totals) is extra to the managers' sheets,
+      // so it carries into the next cycle's draft. Moves are timing the next sheet already shows.
+      const carry = {};
+      if (pin && pin.role === "published") {
+        const w = working(T);
+        if (w.base && w.base.id === pin.id) for (const [key, list] of Object.entries(w.applied)) for (const a of list) if (a.type === "add" || a.type === "set") (carry[key] = carry[key] || []).push({ id: a.id, ref: a.ref, delta: a.delta, text: a.text, date: a.date, reason: a.reason });
+      }
       const lines = [], regions = {};
       for (const r of D.regions) {
         const s = latestSheet(T, r.code, cycle);
@@ -562,13 +571,16 @@
             if (s0) ln.gap = s0.d;
           }
           if (kn.length) ln.note = kn.map(k => `${k.text} (${k.ref})`).join("; ");
+          const cr = carry[key] || [];
+          if (cr.length) { ln.carried = cr; ln.touched = true; ln.note = [ln.note, ...cr.map(c => `${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} ${c.ref || "change"} kept`)].filter(Boolean).join("; "); }
+          const extra = cr.reduce((a, c) => a + c.delta, 0);
           // a decision on the line: v3 target "draft:<cycle>|<key>", or the v2 screens' buttons
           // (decision "line:<sheet>|<key>" = keep plan; an edit from this sheet on this key = use the request)
           let dec = decisionAt(T, "draft:" + cycle + "|" + key);
           if (!dec) { const old = decisionAt(T, "line:" + s.id + "|" + key); if (old) dec = { ...old, outcome: old.outcome === "keep" ? "keep" : old.outcome }; }
           if (!dec) { const e = record.edits.filter(e => e.src === s.id && e.key === key && editLive(e, T)).pop(); if (e) dec = { id: e.id, date: e.date, target: "edit", outcome: "request", note: e.reason }; }
           if (dec) ln.decision = dec;
-          ln.value = !dec ? ln.asked : dec.outcome === "keep" ? last : dec.outcome === "set" ? +dec.value : ln.asked;
+          ln.value = !dec ? (ln.asked == null ? null : ln.asked + extra) : dec.outcome === "keep" ? last : dec.outcome === "set" ? +dec.value : (ln.asked == null ? null : ln.asked + extra);
           ln.settled = ln.status === "accepted" || (!!dec && dec.outcome !== "question");
           lines.push(ln);
         }
@@ -595,7 +607,8 @@
           why: l.reason, detail: l.checks.map(c => `${c.name}: ${c.detail}`).join(" · "), method: l.checks.filter(c => !c.ok).map(c => c.method).join("; "),
           sheet: l.sheet, note: l.note || (l.cell && l.cell.rule.join("; ")) || "", status: l.status, decision: l.decision || null, settled: l.settled, value: l.value, synthetic: l.synthetic, checks: l.checks };
       });
-      return { lines: L, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
+      const touched = d.lines.filter(l => l.touched).map(l => ({ key: l.key, region: l.region, sku: l.sku, month: l.month, last: l.last, ask: l.asked, value: l.value, why: l.note, carried: l.carried, status: l.status }));
+      return { lines: L, touched, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
     }
     /* the same flags grouped by region × item: one decision often covers several months */
     function flagGroups(T, cycle) {
@@ -611,7 +624,7 @@
       const pre = { unsettled: d.counts.unsettled, questions: d.counts.questions, missing: D.regions.filter(r => !d.regions[r.code]).map(r => r.code) };
       return {
         date: T, cycle: d.cycle, name: (opts && opts.name) || `${MON[+d.cycle.slice(5) - 1]} plan`, note: (opts && opts.note) || "", grid, months: d.months,
-        from: d.lastPlan && d.lastPlan.id, synthetic: d.synthetic, preflight: pre,
+        from: d.lastPlan && d.lastPlan.id, synthetic: d.synthetic, preflight: pre, carried: d.lines.flatMap(l => (l.carried || []).map(c => c.id)),
         preflightText: [pre.unsettled && `${pre.unsettled} flag${pre.unsettled > 1 ? "s" : ""} unsettled`, pre.questions && `${pre.questions} open question${pre.questions > 1 ? "s" : ""}`, pre.missing.length && `${pre.missing.length} sheet${pre.missing.length > 1 ? "s" : ""} missing`].filter(Boolean).join(", ") || "All settled",
       };
     }
@@ -652,9 +665,11 @@
         (applied[key] = applied[key] || []).push({ id: c.id, type: c.type, ref: c.ref || null, delta, text, reason: c.reason || "", source: c.source || null, quote: c.quote || null, date: c.date });
       };
       const all = changesAt(T, base);
+      // open questions and scenarios stay listed until withdrawn, whichever version they were logged on
+      for (const c of (record.changes || []).filter(c => (c.type === "hold" || c.type === "scenario") && chLive(c, T) && !all.some(x => x.id === c.id))) all.push({ ...c, carriedOver: true });
       for (const c of all) {
         if (c.replacedBy) { superseded.push({ id: c.id, ref: c.ref, key: c.key, by: c.replacedBy, date: c.date, text: `${toCases(c).arith} replaced` }); continue; }
-        if (c.type === "hold") { holds.push({ id: c.id, ref: c.ref, key: c.key || null, date: c.date, text: c.reason || "Open question", source: c.source || null, quote: c.quote || null }); continue; }
+        if (c.type === "hold") { holds.push({ id: c.id, ref: c.ref, key: c.key || null, date: c.date, text: c.reason || "Open question", source: c.source || null, quote: c.quote || null, earlier: !!c.carriedOver }); continue; }
         const { cs, arith } = toCases(c);
         const [r, sku, m] = c.key.split("|"), cur = (grid[r + "|" + sku] || {})[m];
         if (c.type === "add") at(c.key, cs, c, `${cs >= 0 ? "+" : ""}${arith}`);
@@ -665,7 +680,7 @@
           const t = `${fmt(cs)} CS ${mShort(m)} → ${mShort(c.to)}`;
           at(c.key, -cs, c, t); at(`${r}|${sku}|${c.to}`, cs, c, t);
         } else if (c.type === "scenario") {
-          scenarios.push({ id: c.id, ref: c.ref, key: c.key, date: c.date, released: (base.grid[r + "|" + sku] || {})[m], would: cur == null ? null : cur + cs, d: cs, text: `${cs >= 0 ? "+" : ""}${arith}`, reason: c.reason || "", source: c.source || null });
+          scenarios.push({ id: c.id, ref: c.ref, key: c.key, date: c.date, earlier: !!c.carriedOver, released: (base.grid[r + "|" + sku] || {})[m], would: cur == null ? null : cur + cs, d: cs, text: `${cs >= 0 ? "+" : ""}${arith}`, reason: c.reason || "", source: c.source || null });
         }
       }
       const diff = [];

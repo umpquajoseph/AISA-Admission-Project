@@ -252,6 +252,26 @@ def read_shops():
     return out
 
 
+# ---------------------------------------------------------------- synthetic October
+def bundle_synthetic():
+    """The made-up October cycle in synthetic/ (pipeline/make_synthetic.py), bundled raw
+    like the packet's own files so it goes through the same reader on the page."""
+    d = ROOT / "synthetic"
+    if not (d / "manifest.csv").exists():
+        return dict(submissions=[], emails=[], events=[])
+    subs = []
+    for r in csv.DictReader(open(d / "manifest.csv", newline="", encoding="utf-8")):
+        title, rows = raw_rows(d / r["file"])
+        subs.append(dict(file="synthetic/" + r["file"], received=r["received"], time=r["time"],
+                         note=r["note"] or None, sheet=title, rows=rows))
+    emails = [dict(file="synthetic/" + p.name, raw=p.read_bytes().decode("utf-8", errors="replace"))
+              for p in sorted(d.glob("*.eml"))]
+    events = [dict(id=r["Event ID"], known_on=r["Known on"], region=r["Region"], type=r["Type"],
+                   event_date=r["Event date"], status=r["Status"], detail=r["Detail"])
+              for r in csv.DictReader(open(d / "calendar.csv", newline="", encoding="utf-8"))]
+    return dict(submissions=subs, emails=emails, events=events)
+
+
 # ---------------------------------------------------------------- main
 def main():
     ref = read_reference()
@@ -272,7 +292,7 @@ def main():
         crosswalk=ref["crosswalk"], release_log=ref["release_log"], intake_log=ref["intake_log"],
         releases=releases, submissions=submissions, emails=emails,
         sales_use=sales, sales_through="2026-09-18",
-        shipments=read_shipments(), shops=read_shops(),
+        shipments=read_shipments(), shops=read_shops(), synthetic=bundle_synthetic(),
         sales_drinks=[dict(menu_id=m, sku=s, name=menu.get(m, {}).get("menu_description") or
                            menu.get(m, {}).get("name")) for m, s in std_drinks],
     )
