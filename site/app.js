@@ -118,7 +118,7 @@ const PAGES = { inbox: pageInbox, review: pageReview, plan: pagePlan, release: p
 function countNeeds(id) {
   if (id === "review") return desk.review(S.date).lines.filter(l => !l.settled).length;
   const pub = R.versions.filter(v => v.date <= S.date).map(v => v.date).sort().pop(), base = desk.baseAt(S.date), since = pub || (base ? base.date : "");
-  return desk.needs(S.date).inputs.filter(t => isPlanThread(t.thread) && t.thread.items[t.thread.items.length - 1].date > since).length;
+  return desk.needs(S.date).inputs.filter(t => isPlanThread(t.thread) && t.thread.items[t.thread.items.length - 1].date >= since).length;
 }
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-tab]"); if (t) { S.tab = t.dataset.tab; renderPage(); return; }
@@ -147,7 +147,7 @@ function pageInbox() {
   const pub = R.versions.filter(v => v.date <= S.date).map(v => v.date).sort().pop(), base = desk.baseAt(S.date), since = pub || (base ? base.date : "");
   const lastDate = t => t.thread.items[t.thread.items.length - 1].date;
   const planAll = n.inputs.filter(t => isPlanThread(t.thread)), other = n.inputs.filter(t => !isPlanThread(t.thread));
-  const plan = planAll.filter(t => lastDate(t) > since), older = planAll.filter(t => lastDate(t) <= since);
+  const plan = planAll.filter(t => lastDate(t) >= since), older = planAll.filter(t => lastDate(t) < since);
   const row = (t, waiting) => {
     const th = t.thread, id = th.id, open = S.open[id], last = th.items[th.items.length - 1];
     return `<div class="mrow ${open ? "open" : ""} ${t.reopened ? "new" : ""}">
