@@ -99,10 +99,19 @@ function setDate(d) { S.date = d; save("date", d); render(); }
 /* ------------------------------------------------------------ the assistant */
 const AI = { connected: false, checked: false };
 fetch("/api/status").then(r => r.ok ? r.json() : null).then(j => { AI.checked = true; AI.connected = !!(j && j.connected); AI.server = !!j; render(); }).catch(() => { AI.checked = true; render(); });
-async function aiCall(path, body) {
+/* the assistant's passcode, asked once and kept in this browser (Reset demo leaves it) */
+const PASS = "supplydesk.passcode";
+const passGet = () => { try { return localStorage.getItem(PASS) || ""; } catch { return ""; } };
+const passSet = v => { try { v ? localStorage.setItem(PASS, v) : localStorage.removeItem(PASS); } catch {} };
+async function aiCall(path, body, retried) {
   try {
-    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-desk-passcode": passGet() }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+    if (r.status === 401 && j.code === "passcode" && !retried) {
+      const code = window.prompt(passGet() ? "That passcode did not work. Assistant passcode:" : "Assistant passcode:");
+      if (!code) return { error: "The assistant needs its passcode" };
+      passSet(code.trim()); return aiCall(path, body, true);
+    }
     return r.ok ? j : { error: j.error || `HTTP ${r.status}` };
   } catch (e) { return { error: "Assistant server not running" }; }
 }
