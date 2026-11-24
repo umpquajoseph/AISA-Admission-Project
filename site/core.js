@@ -1032,19 +1032,55 @@
             out.sheets[r.code] = { sheet: s.id, sent: s.date, lines: rows }; }
           return out; })() : null,
         draft: rv.headline ? { cycle: rv.cycle, headline: rv.headline, lastPlan: rv.lastPlan && rv.lastPlan.name, flags: rv.lines.slice(0, opts.flags || 30).map(l => ({ key: l.key, last: l.last, ask: l.ask, expected: l.expected, why: l.why, note: l.note || undefined, decision: l.decision ? l.decision.outcome : undefined })) } : null,
-        known: knownAt(T).map(k => ({ ref: k.ref, key: `${k.region}|${k.sku}|${k.month}`, cs: k.cs, text: k.text, input: k.input })),
+        // each one-off with what the desk's check found on that line of the region's sheet
+        known: (() => { const d = draft(T), lines = {}; for (const l of (d ? d.lines : [])) lines[l.key] = l;
+          return knownAt(T).map(k => { const key = `${k.region}|${k.sku}|${k.month}`, l = lines[key];
+            return { ref: k.ref, key, cs: k.cs, text: k.text, input: k.input, sheet: l ? { asked: l.asked, check: l.reason } : undefined }; }); })(),
         threads,
         lateNews: opts.lateNews || undefined,
         answerKey: ak ? { headline: ak.headline, lean: ak.leanText } : undefined,
         purchasing: { note: "One buyer's watch list of pooled orders at Central Intake, not every order and no stock on hand. Cases.",
           open: purchaseNews(T).filter(i => i.open).map(i => ({ id: i.id, kind: i.kind, date: i.date, title: i.title, detail: i.text })),
           orders: poAt(T).filter(l => l.open > 0).map(l => ({ po: l.id, sku: l.sku, open: l.open, due: l.due })),
-          asked: ordersAt(T).rows.map(o => ({ date: o.date, action: o.action, sku: o.sku, po: o.po || null, cases: o.qty, by: o.by, why: o.reason })) },
+          asked: ordersAt(T).rows.map(o => ({ id: o.auto ? undefined : o.id, date: o.date, action: o.action, sku: o.sku, po: o.po || null, cases: o.qty, by: o.by, why: o.reason, from: o.auto ? "a plan change (follows the plan by itself)" : "the planner" })) },
       };
+    }
+    /* the assistant's lookups: read-only, answered from the desk as of T */
+    function lookup(T, name, a) {
+      a = a || {};
+      if (name === "line") {
+        const key = `${a.region}|${a.sku}|${a.month}`, li = lineInfo(T, key), d = li.draft;
+        if (li.value == null && !d) return { error: `No plan line or sheet line for ${key}` };
+        return { key, plan: li.value, sheet: d ? { sheet: d.sheet, asked: d.asked, lastPlan: d.last, check: d.reason, note: d.note } : null,
+          checks: li.checks.map(c => ({ name: c.name, ok: c.ok, detail: c.detail })), changes: li.changes, versions: li.versions };
+      }
+      if (name === "message") {
+        const t = messageText(a.id, T);
+        return t && t !== String(a.id) ? { id: a.id, text: t } : { error: `Nothing with id ${a.id}` };
+      }
+      if (name === "search") {
+        const words = String(a.text || "").toLowerCase().split(/\s+/).filter(w => w.length > 2);
+        if (!words.length) return { error: "Give a few words to search for" };
+        const hit = s => { s = s.toLowerCase(); return words.filter(w => s.includes(w)).length; };
+        const found = [];
+        for (const x of inputsAt(T)) {
+          const s = x.kind === "email" ? `${x.mail.sender} ${x.mail.subject} ${x.mail.body}` : x.kind === "calendar" ? `${x.event.id} ${x.event.type} ${x.event.detail}` : x.kind === "sheet" ? `${x.src} ${regionName(x.region)} sheet` : "";
+          const n = hit(s); if (n) found.push({ n, id: x.id, kind: x.kind, date: x.date, title: x.kind === "email" ? x.mail.subject : x.kind === "calendar" ? `${x.event.id} ${x.event.type}` : x.src });
+        }
+        for (const c of (record.changes || []).filter(c => c.date <= T)) { const n = hit(`${c.reason} ${c.quote || ""} ${c.ref || ""}`); if (n) found.push({ n, id: c.id, kind: "change", date: c.date, title: `${c.key} ${c.type} ${c.qty} ${c.unit}: ${c.reason}${c.removed_on ? " (withdrawn)" : ""}` }); }
+        return { results: found.sort((x, y) => y.n - x.n || y.date.localeCompare(x.date)).slice(0, 15).map(({ n, ...r }) => r) };
+      }
+      if (name === "purchasing") {
+        const sku = a.sku;
+        return { orders: poAt(T).filter(l => l.sku === sku).map(l => ({ po: l.id, ordered: l.qty, open: l.open, due: l.due, cancelled: l.cancelled || undefined })),
+          news: purchaseNews(T).filter(i => i.sku === sku).map(i => ({ id: i.id, kind: i.kind, open: !!i.open, title: i.title, detail: i.text })),
+          asked: ordersAt(T).rows.filter(o => o.sku === sku).map(o => ({ id: o.auto ? undefined : o.id, action: o.action, cases: o.qty, by: o.by, po: o.po || null, why: o.reason, from: o.auto ? "a plan change" : "the planner" })) };
+      }
+      return { error: `Unknown lookup ${name}` };
     }
 
     return {
-      messageText, assistantContext,
+      messageText, assistantContext, lookup,
       inputs, byId, sheets, versionsAll, ITEMS, regionName,
       baseAt, prevBase, planAt, editsAt, inputsAt, threadsAt, editLive, sheetsAt, cycleAt, latestSheet, requestAt, decisionAt, checks, needs, fmt, sign,
       // v3

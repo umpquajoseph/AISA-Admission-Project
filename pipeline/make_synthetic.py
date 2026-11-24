@@ -282,7 +282,7 @@ EMAILS = [
 
 CALENDAR = [
     ("MW-OPEN-03", "2026-10-06", "R05", "Shop opening", "2026-11-09", "Scheduled",
-     "Third autumn-wave site. Opening kit ships Nov 3: 24 CS S001, 18 CS S005 and 12 CS S014. Regular regional flow is planned separately."),
+     "Third autumn-wave site. Opening kit ships Nov 3: 24 CS S001, 18 CS S005 and 12 CS S014. Mesa West's November sheet includes the kit."),
     ("CA-HARV-02", "2026-10-12", "R01", "Regional promotion", "2026-11-05", "Requested",
      "Harvest feature estimate submitted to the central planner by email."),
     ("VN-RTE-05", "2026-10-13", "R03", "Route change", "2026-11-16", "Scheduled",

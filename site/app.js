@@ -509,7 +509,13 @@ function undoFlash(u) {
   R.decisions = R.decisions.filter(d => !(u.decisions || []).includes(d.id));
   for (const c of R.changes) if ((u.changes || []).includes(c.id)) c.removed_on = S.date;
   for (const o of R.orders) if ((u.orders || []).includes(o.id)) o.removed_on = S.date;
-  S.flash = { tab: "news", text: "Undone. The item is open again." };
+  // a withdrawal from Ask: bring the change or ask back
+  const back = u.restore || {};
+  for (const c of R.changes) if ((back.changes || []).includes(c.id)) delete c.removed_on;
+  for (const o of R.orders) if ((back.orders || []).includes(o.id)) delete o.removed_on;
+  // a sheet correction from Ask: the line reads as the sheet sent it again
+  for (const e of u.sheetEdits || []) R.reportEdits.push({ id: uid("re"), date: S.date, sheet: e.sheet, key: e.key, cs: null, reason: "Undone" });
+  S.flash = { tab: "news", text: u.restore || u.sheetEdits ? "Undone." : "Undone. The item is open again." };
   commit();
 }
 function pageNews(X) {
@@ -597,7 +603,7 @@ function bindBuy() {
 /* an ask of purchasing from a Late news item; the card and Ask's Approve both save through here */
 function saveOrder(a) {
   const it = buyItem(a.item);
-  const o = { id: uid("o"), date: S.date, item: a.item, kind: it ? it.kind : "", action: a.action, sku: a.sku || (it && it.sku), po: a.po || "", qty: +a.qty, by: a.by, reason: (a.reason || "").trim() || (it ? it.title : ""), title: it ? it.title : a.item };
+  const o = { id: uid("o"), date: S.date, item: a.item, kind: it ? it.kind : "", action: a.action, sku: a.sku || (it && it.sku), po: a.po || "", qty: +a.qty, by: a.by, reason: (a.reason || "").trim() || (it ? it.title : ""), title: it ? it.title : a.title || a.item };
   R.orders.push(o);
   S.flash = { tab: "news", order: true, undo: { orders: [o.id] }, text: `Asked purchasing: ${actWord(o.action)} ${fmt(o.qty)} cases of ${itemName(o.sku)}${o.po ? ` on ${o.po}` : ""} by ${dlabel(o.by)}.` };
   commit();
@@ -707,7 +713,7 @@ function cardCalc(c) {
   const cs = c.unit === "EA" ? q / it.ea_per_case : q, conv = c.unit === "EA" ? `${fmt(q)} ${units(c.sku)} ÷ ${it.ea_per_case} = ${fmt(cs)} cases · ` : "";
   if (cur == null) return `${conv}${regName(c.region)} has no plan line for this item`;
   if (c.type === "add") return `${conv}${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur + cs)}`;
-  if (c.type === "set") { const prev = R.changes.filter(x => x.ref === c.ref && x.key === `${c.region}|${c.sku}|${c.month}` && !x.removed_on).pop(); return `${conv}${prev ? `replaces the earlier ${fmt(prev.qty)} ${unitWord(c.sku, prev.unit)}` : `${mlabel(c.month)} becomes ${fmt(cs)}`}`; }
+  if (c.type === "set") { const prev = c.replaces ? R.changes.find(x => x.id === c.replaces) : R.changes.filter(x => x.ref === c.ref && x.key === `${c.region}|${c.sku}|${c.month}` && !x.removed_on).pop(); return `${conv}${prev ? `replaces the earlier ${fmt(prev.qty)} ${unitWord(c.sku, prev.unit)}` : `${mlabel(c.month)} becomes ${fmt(cs)}`}`; }
   return `${moveAll(c) ? "all of " : ""}${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur - cs)} · ${mlabel(c.to || "")} +${fmt(cs)}`;
 }
 const moveAll = c => c.type === "move" && String(c.qty).trim() === "";
@@ -1090,8 +1096,9 @@ function pageAsk() {
     ${head("Ask", "Ask about the plan, a sheet, an email or a change, or tell it what to do with a Late news item. Answers come only from this desk's record. Nothing changes until you click Approve.")}
     ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer)}</div>
       ${(h.actions || []).map((a, j) => actHtml(a, `${i}|${j}`)).join("")}
-      <div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}</div></div>`).join("")}
+      <div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}${h.looked && h.looked.length ? ` · looked up ${esc(h.looked.join(", "))}` : ""}</div></div>`).join("")}
     <form class="askbox" id="askForm"><textarea id="askQ" placeholder="${hist.length ? "Reply, or ask a follow-up" : "Ask about the plan, or say what to do with a Late news item"}">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : hist.length ? "Reply" : "Ask"}</button></form>
+    ${typeof S.asking === "string" ? `<div class="hint">Looking up ${esc(S.asking)}…</div>` : ""}
     ${hist.length ? `<button class="btn small link" id="askNew">New topic</button>` : ""}
     ${AI.checked && !AI.connected ? `<div class="hint">${AI.server ? "The assistant is not connected here: the server has no API key." : "The assistant server is not running (npm run dev)."}</div>` : ""}
     ${hist.length ? "" : `<div class="chips">${examples.map(q => `<button class="chip" data-askex="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
@@ -1100,9 +1107,17 @@ function pageAsk() {
     if (!q.trim() || S.asking) return;
     S.asking = true; S.askQ = q; renderPage();
     const history = (S.asks || []).filter(h => !h.error).map(h => ({ q: h.q, a: h.answer }));
-    const j = await aiCall("/api/ask", { question: q, history, context: desk.assistantContext(S.date, { lateNews: lateNewsForAI() }) });
+    // one context for the whole question, so every lookup round reads the same cached record
+    const context = desk.assistantContext(S.date, { lateNews: lateNewsForAI() }), steps = [], looked = [];
+    let j;
+    for (;;) {
+      j = await aiCall("/api/ask", { question: q, history, context, steps });
+      if (j.error || !j.calls) break;
+      const results = j.calls.map(c => { looked.push(lookupLabel(c)); S.asking = looked[looked.length - 1]; renderPage(); return { id: c.id, result: desk.lookup(S.date, c.name, c.input) }; });
+      steps.push({ assistant: j.assistant, results });
+    }
     S.asking = false; S.askQ = "";
-    (S.asks = S.asks || []).push({ q, date: S.date, ...(j.error ? { error: j.error } : j) });
+    (S.asks = S.asks || []).push({ q, date: S.date, looked, ...(j.error ? { error: j.error } : j) });
     renderPage();
     $("askForm").scrollIntoView({ block: "end" });
   };
@@ -1115,12 +1130,38 @@ function pageAsk() {
   document.querySelectorAll("[data-aundo]").forEach(b => b.onclick = () => { const a = at(b.dataset.aundo), u = a.done.undo; a.done = null; undoFlash(u); });
   sideFoot();
 }
-/* Approve on an action Ask proposed: saves exactly as the Late news card would, and keeps the Undo */
+/* what Ask is looking up, in the planner's words */
+function lookupLabel(c) {
+  try { return lookupText(c); } catch { return c.name; }
+}
+function lookupText(c) {
+  const i = c.input || {};
+  if (c.name === "line") return `${regName(i.region) || i.region} ${itemName(i.sku) || i.sku} ${mlabel(i.month) || i.month}`;
+  if (c.name === "message") { const x = desk.byId[i.id]; return x && x.mail ? x.mail.subject : x && x.event ? `${x.event.id} ${x.event.type}` : threadTitle(i.id); }
+  if (c.name === "search") return `“${i.text}”`;
+  if (c.name === "purchasing") return `${itemName(i.sku) || i.sku} orders`;
+  return c.name;
+}
+/* Approve on an action Ask proposed: saves exactly as the Late news card or sheet page would, and keeps the Undo */
 function approveAction(a) {
   a.gone = "";
   const ln = lateNewsForAI(), live = [...ln.open, ...ln.waiting].find(x => x.id === a.target);
-  if (a.target && !live) { a.gone = "This item is no longer open."; return; }
-  if (a.kind === "decide") {
+  if (["decide", "change"].includes(a.kind) && a.target && !live) { a.gone = "This item is no longer open."; return; }
+  if (a.kind === "withdraw") {
+    const x = (a.what === "change" ? R.changes : R.orders).find(x => x.id === a.target);
+    if (!x || x.removed_on) { a.gone = "Already withdrawn."; return; }
+    x.removed_on = S.date;
+    const what = a.what === "change" ? `the change ${x.reason ? `“${x.reason}”` : ""}`.trim() : `the ask to ${actWord(x.action)} ${fmt(x.qty)} cases of ${itemName(x.sku)}`;
+    S.flash = { tab: "news", undo: { restore: { [a.what === "change" ? "changes" : "orders"]: [x.id] } }, text: `Withdrew ${what}.` };
+    commit();
+  } else if (a.kind === "sheet") {
+    const s = desk.latestSheet(S.date, a.region, desk.cycleAt(S.date));
+    if (!s || s.id !== a.target) { a.gone = "That sheet has been replaced since."; return; }
+    const key = `${a.region}|${a.sku}|${a.month}`;
+    R.reportEdits.push({ id: uid("re"), date: S.date, sheet: s.id, key, ...(a.type === "remove" ? { cs: null, removed: true, reason: a.reason || "Line removed by the head manager" } : { cs: +a.qty, reason: a.reason || "Corrected by the head manager" }) });
+    S.flash = { tab: "news", undo: { sheetEdits: [{ sheet: s.id, key }] }, text: `${regName(a.region)}'s sheet, ${itemName(a.sku)} ${mlabel(a.month)}: ${a.type === "remove" ? "line removed" : `now ${fmt(+a.qty)} cases`}.` };
+    commit();
+  } else if (a.kind === "decide") {
     const late = context().late.find(x => x.sheet.id === a.target && x.pending);
     if (late) { // a late sheet: keep the plan on every line that differs
       const ids = [];
@@ -1133,10 +1174,10 @@ function approveAction(a) {
     }
     commit();
   } else if (a.kind === "order") {
-    saveOrder({ item: a.target, action: a.action, qty: a.qty, by: a.by, po: a.po, reason: a.reason });
+    saveOrder({ item: a.target, sku: a.sku, action: a.action, qty: a.qty, by: a.by, po: a.po, reason: a.reason || a.label, title: a.label });
   } else {
     const th = a.target && desk.threadsAt(S.date).find(t => t.id === a.target);
-    saveChange({ type: a.type, region: a.region, sku: a.sku, month: a.month, qty: a.qty, unit: a.unit, to: a.to, reason: a.reason || a.label, quote: "", ai: true,
+    saveChange({ type: a.type, region: a.region, sku: a.sku, month: a.month, qty: a.qty, unit: a.unit, to: a.to, reason: a.reason || a.label, quote: "", ai: true, replaces: a.replaces || null,
       thread: a.target || null, ref: th ? (th.kind === "calendar" ? th.id.replace(/^cal:/, "") : th.id) : a.target || "" });
   }
   a.done = { text: S.flash.text, undo: S.flash.undo };
