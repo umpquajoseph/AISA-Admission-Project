@@ -903,12 +903,12 @@
             // cases the supplier or buyer already cut from these orders count against the drop
             const cut0 = used.reduce((t, l) => t + l.cancelled, 0), excess = Math.min(open, -net - cut0); if (excess < 1 || !used.length) continue;
             const id = "much:" + a.sku + "@" + a.month, cut = askedOf(id, T).filter(o => o.action === "cut").reduce((t, o) => t + o.qty, 0);
-            const was = netPlan(working(used[0].entered).grid, a.sku, a.month);
+            const now = planNow(a.sku, a.month), was = now == null ? null : Math.round((now - net) * 1000) / 1000;   // before the drop, so was − now is the drop the title counts
             const how = [...a.parts.filter(p => p.d < 0).map(p => `${regionName(p.region)}: ${p.text}${p.reason ? ` (${p.reason})` : ""}`), ...(check ? a.checkParts.map(p => `${regionName(p.region)}: set to ${fmt(p.value)} under Check, was ${fmt(p.last)}`) : [])];
             const big = used.slice().sort((x, y) => y.open - x.open)[0];
             items.push({ id, kind: "much", date: dates[dates.length - 1] || w.base.date, sku: a.sku, month: a.month, region: null, lines: used, need: excess, synthetic: used.some(l => l.synthetic),
               title: `${name(a.sku)}: ${fmt(open)} cases on order, but you lowered ${mLong(a.month)}. ${fmt(excess)} more than the plan needs`,
-              text: how.join(" · "), source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now${was != null ? `, ${fmt(was)} when ${big.po} was placed` : ""}`,
+              text: how.join(" · "), source: `Plan for ${mLong(a.month)}, all regions: ${fmt(planNow(a.sku, a.month))} cases now${was != null ? `, ${fmt(was)} before you lowered it` : ""}`,
               prefill: { action: "cut", qty: Math.max(0, excess - cut), by: big.due || big.due0, po: big.id }, change: changeInit(a.sku, a.month) });
           } else if (net >= 1 && a.d > 0) {
             // need date: a calendar event for the same region and month that arrived within three days of
