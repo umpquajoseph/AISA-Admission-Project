@@ -290,7 +290,7 @@ svg.chart .pt.sales { fill: var(--ok); }
 .ask .chips { margin: var(--s) 0; }
 .qa { background: var(--card); border: 1px solid var(--border); padding: var(--s) var(--m); margin-top: var(--s); }
 .qa .q { font-weight: 600; }
-.qa .a { margin: 4px 0; }
+.qa .a { margin: 4px 0; white-space: pre-line; }
 .qa .cites { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* submanager page */

@@ -603,6 +603,17 @@ function lateSheets(pub) {
   }
   return out;
 }
+/* the Late news screen as a list, for Ask: built from the same lists the screen draws */
+function lateNewsForAI() {
+  const X = context(), N = X.news, th = t => ({ id: t.thread.id, kind: t.thread.kind, title: t.thread.title, region: t.thread.region ? regName(t.thread.region) : null, date: t.thread.last });
+  return {
+    note: "Exactly what the Late news screen shows open on asOf. Full messages are in threads.",
+    open: [...N.open.map(th), ...N.buy.map(i => ({ id: i.id, kind: PKIND[i.kind], title: i.title, from: i.from, detail: i.text, date: i.date })),
+      ...X.late.filter(x => x.pending).map(x => ({ id: x.sheet.id, kind: "late sheet", region: regName(x.sheet.region), lines: x.open.length, date: x.sheet.date }))],
+    waiting: N.waiting.map(t => ({ ...th(t), waitingOn: t.decision.note || "" })),
+    dockAndOrders: N.other.map(th),
+  };
+}
 function lateHtml(x) {
   const s = x.sheet, id = "late:" + s.id, open = x.open.length && (S.open[id] === true || (S.open[id] !== false && x.open.length <= 10));
   if (!x.pending) return "";
@@ -1061,7 +1072,7 @@ function pageAsk() {
   const ask = async q => {
     if (!q.trim() || S.asking) return;
     S.asking = true; S.askQ = q; renderPage();
-    const j = await aiCall("/api/ask", { question: q, context: desk.assistantContext(S.date) });
+    const j = await aiCall("/api/ask", { question: q, context: desk.assistantContext(S.date, { lateNews: lateNewsForAI() }) });
     S.asking = false; S.askQ = "";
     (S.asks = S.asks || []).unshift({ q, date: S.date, ...(j.error ? { error: j.error } : j) });
     renderPage();
