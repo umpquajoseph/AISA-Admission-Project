@@ -7,7 +7,8 @@
  * Reading and plan logic live in core.js; this file only draws and records. */
 "use strict";
 const D = window.DATA, C = window.Core;
-const START = D.releases.filter(r => r.disposition === "Posted").map(r => r.logged).sort()[0], END = D.cutoff;
+const START = D.releases.filter(r => r.disposition === "Posted").map(r => r.logged).sort()[0];
+const END = [D.cutoff, ...((D.synthetic || {}).submissions || []).map(x => x.received), ...((D.synthetic || {}).events || []).map(x => x.known_on), ...((D.synthetic || {}).emails || []).map(x => (x.raw.match(/^Date: .*?(\d{1,2}) (\w{3}) (\d{4})/m) || []).slice(1).join(" ")).map(t => t && new Date(t + " 12:00 UTC").toISOString().slice(0, 10))].filter(Boolean).sort().pop();
 const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
 const REGIONS = Object.fromEntries(D.regions.map(r => [r.code, r]));
 const CATS = [...new Set(D.items.map(i => i.category))];
@@ -31,7 +32,7 @@ const S = {
 (() => {                                                  // demo links: ?tab=plan&date=2026-09-17&example=1
   const q = new URLSearchParams(location.search);
   if (q.get("tab")) S.tab = q.get("tab");
-  if (q.get("date") >= START && q.get("date") <= END) S.date = q.get("date");
+  if (q.get("date") >= START && q.get("date") <= END) { S.date = q.get("date"); save("date", S.date); }
   if (!S.date) S.date = desk.sheets.filter(s => s.cycle === "2026-09").map(s => s.date).sort()[0] || END;
   if (q.get("example") === "1" && !R.changes.length && !R.versions.length) { R = workedExample(); save("record", R); desk = C.Desk(D, R); }
 })();
@@ -87,7 +88,12 @@ function jump(dir) {
 }
 
 /* ------------------------------------------------------------ shell */
-function render() { indexArrivals(); renderClock(); renderPage(); }
+const ROLE = new URLSearchParams(location.search).get("role") === "manager" ? "manager" : "planner";
+function render() { indexArrivals(); if (ROLE === "manager") return renderManager(); renderClock(); renderPage(); }
+window.addEventListener("storage", e => {                  // another tab (the manager page) changed the record
+  if (e.key === KEY + "record") { R = { ...emptyRecord(), ...load("record", {}) }; desk = C.Desk(D, R); render(); }
+  if (e.key === KEY + "date" && ROLE === "manager") { S.date = load("date", S.date); render(); }
+});
 function renderPage() {
   save("tab", S.tab);
   $("tabs").innerHTML = TABS.map(([id, n]) => {
@@ -100,7 +106,11 @@ function renderPage() {
   (PAGES[S.tab] || pageInbox)();
 }
 const PAGES = { inbox: pageInbox, review: pageReview, plan: pagePlan, release: pageRelease, history: pageHistory, ask: pageAsk };
-function countNeeds(id) { if (id === "review") return desk.review(S.date).lines.filter(l => !l.settled).length; return desk.needs(S.date).inputs.filter(t => isPlanThread(t.thread)).length; }
+function countNeeds(id) {
+  if (id === "review") return desk.review(S.date).lines.filter(l => !l.settled).length;
+  const pub = R.versions.filter(v => v.date <= S.date).map(v => v.date).sort().pop(), base = desk.baseAt(S.date), since = pub || (base ? base.date : "");
+  return desk.needs(S.date).inputs.filter(t => isPlanThread(t.thread) && t.thread.items[t.thread.items.length - 1].date > since).length;
+}
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-tab]"); if (t) { S.tab = t.dataset.tab; renderPage(); return; }
   const g = e.target.closest("[data-goto]"); if (g) { goto(g.dataset.goto); }
@@ -125,7 +135,10 @@ function pageInbox() {
     const st = s.problems.length ? `<span class="bad">${s.problems.length} problem${s.problems.length > 1 ? "s" : ""}</span>` : s.replaces ? `<span>corrected</span>` : `<span class="ok">✓</span>`;
     return `<button class="tile ${S.sheetView === s.id ? "on" : ""}" data-sheet="${esc(s.id)}" data-region="${r.code}"><b>${esc(r.name)}</b><span>received ${dlabel(s.date)}</span>${st}${review[r.code] ? `<a class="rv" data-tab="review">${review[r.code]} to review</a>` : ""}</button>`;
   }).join("") : "";
-  const plan = n.inputs.filter(t => isPlanThread(t.thread)), other = n.inputs.filter(t => !isPlanThread(t.thread));
+  const pub = R.versions.filter(v => v.date <= S.date).map(v => v.date).sort().pop(), base = desk.baseAt(S.date), since = pub || (base ? base.date : "");
+  const lastDate = t => t.thread.items[t.thread.items.length - 1].date;
+  const planAll = n.inputs.filter(t => isPlanThread(t.thread)), other = n.inputs.filter(t => !isPlanThread(t.thread));
+  const plan = planAll.filter(t => lastDate(t) > since), older = planAll.filter(t => lastDate(t) <= since);
   const row = (t, waiting) => {
     const th = t.thread, id = th.id, open = S.open[id], last = th.items[th.items.length - 1];
     return `<div class="mrow ${open ? "open" : ""} ${t.reopened ? "new" : ""}">
@@ -143,6 +156,7 @@ function pageInbox() {
         <h2>Messages ${plan.length ? `<span class="count">${plan.length}</span>` : ""}</h2>
         <div class="mlist">${plan.map(t => row(t, false)).join("") || `<div class="empty">Nothing new.</div>`}</div>
         ${n.waiting.length ? `<h2>Waiting <span class="count grey">${n.waiting.length}</span></h2><div class="mlist">${n.waiting.map(t => row(t, true)).join("")}</div>` : ""}
+        ${older.length ? `<h2 class="toggle" data-toggle="older">${S.open.older ? "▾" : "▸"} Before the current plan <span class="count grey">${older.length}</span></h2>${S.open.older ? `<div class="mlist">${older.map(t => row(t, false)).join("")}</div>` : ""}` : ""}
         ${other.length ? `<h2 class="toggle" data-toggle="other">${S.open.other ? "▾" : "▸"} Dock and orders <span class="count grey">${other.length}</span></h2>${S.open.other ? `<div class="mlist">${other.map(t => row(t, false)).join("")}</div>` : ""}` : ""}
       </div>
       <div>${addBoxHtml()}</div>
@@ -236,23 +250,36 @@ function pageReview() {
   const got = cyc ? D.regions.filter(r => desk.latestSheet(S.date, r.code, cyc)).length : 0;
   const tile = (n, label, cls = "") => `<div class="stat ${cls}"><b>${n}</b><span>${label}</span></div>`;
   const outcome = l => ({ request: "used ask", keep: "kept plan", set: `set ${fmt(l.value)}`, question: "open question" })[l.decision && l.decision.outcome] || "";
-  const row = l => `<tr class="${l.settled ? "done" : ""}"><td>${esc(regName(l.region))}</td><td><a data-goto="plan:${l.key}">${esc(itemName(l.sku))}</a></td><td>${mlabel(l.month)}</td>
+  const groups = []; const gi = {};
+  for (const l of L) { const g = l.region + "|" + l.sku; if (!gi[g]) groups.push(gi[g] = { id: g, region: l.region, sku: l.sku, lines: [] }); gi[g].lines.push(l); }
+  for (const g of groups) g.lines.sort((a, b) => a.month.localeCompare(b.month));
+  const lineRow = (l, sub) => `<tr class="${sub ? "sub" : ""} ${l.settled ? "done" : ""}"><td>${sub ? "" : esc(regName(l.region))}</td><td>${sub ? "" : `<a data-goto="plan:${l.key}">${esc(itemName(l.sku))}</a>`}</td><td>${mlabel(l.month)}</td>
     <td class="n">${fmt(l.last)}</td><td class="n"><b>${fmt(l.ask)}</b></td><td class="n">${l.expected != null ? fmt(l.expected) : "—"}</td>
     <td class="why" title="${esc(l.detail || "")}">${esc(l.why)}</td>
     <td class="nowrap acts">${l.settled ? `<span class="hint">${esc(outcome(l))}</span> <button class="btn small link" data-dec="${l.key}|">Undo</button>`
       : S.setting === l.key ? `<form class="inline" data-setform="${l.key}"><input type="number" id="setVal" value="${l.expected ?? l.ask}" style="width:70px"><button class="btn small primary">Set</button></form>`
       : `<button class="btn small" data-dec="${l.key}|request">Use ask</button><button class="btn small" data-dec="${l.key}|keep">Keep plan</button><button class="btn small" data-set="${l.key}">Set…</button><button class="btn small" data-dec="${l.key}|question" title="Open question">?</button>`}</td></tr>`;
+  const groupRow = g => {
+    if (g.lines.length === 1) return lineRow(g.lines[0], false);
+    const top = [...g.lines].sort((a, b) => Math.abs(b.ask - (b.expected ?? b.last)) - Math.abs(a.ask - (a.expected ?? a.last)))[0], open = S.open["g:" + g.id];
+    const keys = g.lines.map(l => l.key).join(",");
+    return `<tr class="grp"><td>${esc(regName(g.region))}</td><td><a data-goto="plan:${top.key}">${esc(itemName(g.sku))}</a></td><td><span class="toggle" data-toggle="g:${g.id}">${open ? "▾" : "▸"} ${g.lines.length} months</span></td>
+      <td class="n">${fmt(top.last)}</td><td class="n"><b>${fmt(top.ask)}</b></td><td class="n">${top.expected != null ? fmt(top.expected) : "—"}</td><td class="why" title="${esc(top.detail || "")}">${mlabel(top.month)}: ${esc(top.why)}</td>
+      <td class="nowrap acts"><button class="btn small" data-decall="${keys}|request">Use all asks</button><button class="btn small" data-decall="${keys}|keep">Keep plan</button></td></tr>${open ? g.lines.map(l => lineRow(l, true)).join("") : ""}`;
+  };
   const head = `<tr><th>Region</th><th>Item</th><th>Month</th><th class="n">Last plan</th><th class="n">Asks</th><th class="n">Expected</th><th>Why</th><th></th></tr>`;
   $("page").innerHTML = `
     <div class="planhead"><h1>Review${cyc ? ` · ${mlong(cyc)}` : ""}</h1>${rv.synthetic ? `<span class="pill Scenario">synthetic</span>` : ""}<div class="spacer"></div>${L.length === 0 && rv.total ? `<button class="btn primary" data-tab="plan">Go to publish →</button>` : ""}</div>
-    <div class="stats">${tile(`${got}/6`, "sheets in", got === 6 ? "ok" : "")}${rv.total != null ? tile(fmt(rv.total), "lines") + tile(fmt(rv.accepted), "as asked", "ok") : ""}${tile(L.length, "need you", L.length ? "warn" : "ok")}${done.length ? tile(done.length, "settled") : ""}</div>
-    ${L.length ? `<table class="plain review flags">${head}${L.map(row).join("")}</table>` : `<div class="empty">${cyc ? "All settled." : "No sheets yet."}</div>`}
-    ${done.length ? `<h2 class="toggle" data-toggle="settled">${S.open.settled ? "▾" : "▸"} Settled <span class="count grey">${done.length}</span></h2>${S.open.settled ? `<table class="plain review">${head}${done.map(row).join("")}</table>` : ""}` : ""}`;
+    <div class="stats">${tile(`${got}/6`, "sheets in", got === 6 ? "ok" : "")}${rv.total != null ? tile(fmt(rv.total), "lines") + tile(fmt(rv.accepted), "as asked", "ok") : ""}${tile(groups.length, "items need you", groups.length ? "warn" : "ok")}${done.length ? tile(done.length, "settled") : ""}</div>
+    ${L.length ? `<table class="plain review flags">${head}${groups.map(groupRow).join("")}</table>` : `<div class="empty">${cyc ? "All settled." : "No sheets yet."}</div>`}
+    ${done.length ? `<h2 class="toggle" data-toggle="settled">${S.open.settled ? "▾" : "▸"} Settled <span class="count grey">${done.length}</span></h2>${S.open.settled ? `<table class="plain review">${head}${done.map(l => lineRow(l, false)).join("")}</table>` : ""}` : ""}`;
   document.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const [k, o] = b.dataset.dec.split(/\|(?=[a-z]*$)/); decide(k, o || null); });
+  document.querySelectorAll("[data-decall]").forEach(b => b.onclick = () => { const [ks, o] = b.dataset.decall.split(/\|(?=[a-z]*$)/); const cyc = desk.cycleAt(S.date); for (const k of ks.split(",")) { R.decisions = R.decisions.filter(d => d.target !== `draft:${cyc}|${k}`); R.decisions.push({ id: uid("d"), date: S.date, target: `draft:${cyc}|${k}`, outcome: o }); } commit(); });
   document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => { S.setting = b.dataset.set; renderPage(); setTimeout(() => { const i = $("setVal"); if (i) { i.focus(); i.select(); } }); });
   document.querySelectorAll("[data-setform]").forEach(f => f.onsubmit = e => { e.preventDefault(); const v = parseFloat($("setVal").value); S.setting = null; if (!isNaN(v)) decide(f.dataset.setform, "set", v); else renderPage(); });
   document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { S.open[b.dataset.toggle] = !S.open[b.dataset.toggle]; renderPage(); });
 }
+
 /* ------------------------------------------------------------ Release: what purchasing and finance read */
 function releaseRows() { return desk.releaseList(S.date); }
 function pageRelease() {
@@ -720,6 +747,62 @@ function pageAsk() {
     <div class="list">${examples.map(q => `<div class="item">${esc(q)}</div>`).join("")}</div>`;
 }
 
+/* ------------------------------------------------------------ Manager page: a regional manager sends a sheet or a late request */
+function renderManager() {
+  document.body.classList.add("manager");
+  S.mgr = S.mgr || load("mgr", "R06");
+  $("tabs").innerHTML = `<span class="tab on">Regional manager</span>`;
+  $("clock").innerHTML = `<span class="hint">${dlong(S.date)}</span>`;
+  $("meta").innerHTML = `<select id="mgrRegion">${D.regions.map(r => `<option value="${r.code}" ${r.code === S.mgr ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>`;
+  const reg = S.mgr, mine = desk.inputs.filter(x => x.region === reg && x.date <= S.date && (x.kind === "sheet" || x.from === "manager")).slice(-6).reverse();
+  const p = S.preview;
+  $("page").innerHTML = `<div class="mgr">
+    <div class="drop" id="mgrDrop">${p ? mgrPreview(p) : `<b>Drop your request sheet here</b><span class="hint">the same Excel file you always send · or</span><label class="btn">Choose file<input type="file" id="mgrFile" accept=".xlsx,.xls,.csv" hidden></label>`}</div>
+    <h2>Late request</h2>
+    <form class="mgrreq" id="mgrReq">
+      <select id="rqItem">${D.items.map(i => `<option value="${i.sku}">${esc(i.name)}</option>`).join("")}</select>
+      <select id="rqMonth">${(desk.planAt(S.date) || { months: [] }).months.map(m => `<option value="${m}">${mlabel(m)}</option>`).join("")}</select>
+      <select id="rqType"><option value="add">Add</option><option value="set">Make it a total of</option></select>
+      <input type="number" id="rqQty" placeholder="qty" style="width:80px"><select id="rqUnit"><option value="CS">cases</option><option value="EA">bottles / bags</option></select>
+      <input type="text" id="rqWhy" class="grow" placeholder="Why (e.g. promo at 4 shops)"><button class="btn primary">Send</button>
+    </form>
+    <h2>Sent from ${esc(regName(reg))}</h2>
+    <div class="mlist">${mine.map(x => `<div class="mrow"><div class="mhead"><span class="pill ${x.kind === "sheet" ? "sheet" : "email"}">${x.kind === "sheet" ? "Sheet" : "Request"}</span><b>${esc(x.kind === "sheet" ? `${mlong(x.cycle)} sheet${x.replaces ? " · correction" : ""}` : x.mail.subject)}</b><span class="hint">${esc(x.note || "")}</span><span class="hint">${dlabel(x.date)}</span></div></div>`).join("") || `<div class="empty">Nothing yet.</div>`}</div>
+  </div>`;
+  $("mgrRegion").onchange = e => { S.mgr = e.target.value; save("mgr", S.mgr); S.preview = null; render(); };
+  const dz = $("mgrDrop");
+  dz.ondragover = e => { e.preventDefault(); dz.classList.add("on"); };
+  dz.ondragleave = () => dz.classList.remove("on");
+  const take = async f => { const pv = await readInput(f.name, f); if (pv.kind === "sheet") { pv.region = reg; resolvePreview(pv); } S.preview = pv; render(); };
+  dz.ondrop = e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) take(f); };
+  const fi = $("mgrFile"); if (fi) fi.onchange = e => { if (e.target.files[0]) take(e.target.files[0]); };
+  const c = $("pvCancel"); if (c) c.onclick = () => { S.preview = null; render(); };
+  const ad = $("pvAdd"); if (ad) ad.onclick = () => { const id = addPreview(S.preview); const x = R.inputs.find(i => i.id === id); x.from = "manager"; x.note = ($("pvNote") || {}).value || ""; S.preview = null; commit(); };
+  $("mgrReq").onsubmit = e => {
+    e.preventDefault();
+    const sku = $("rqItem").value, m = $("rqMonth").value, q = $("rqQty").value, unit = $("rqUnit").value, type = $("rqType").value, why = $("rqWhy").value.trim();
+    if (!q) return $("rqQty").focus();
+    const what = `${type === "set" ? "Make it a total of" : "Add"} ${q} ${unit === "EA" ? ITEMS[sku].ea_unit.toLowerCase() + "s" : "cases"} of ${itemName(sku)} for ${mlong(m)}`;
+    R.inputs.push({ id: uid("in"), date: S.date, time: new Date().toTimeString().slice(0, 5), src: "manager page", kind: "email", from: "manager", region: reg,
+      request: { sku, month: m, type, qty: +q, unit }, mail: { date: S.date, time: "", sender: `${REGIONS[reg].manager || regName(reg)} | ${regName(reg)}`, to: "Central planning", subject: `${regName(reg)} request: ${itemName(sku)} ${mlabel(m)}`, body: `${what}.\n${why}`, attachments: [] } });
+    commit();
+  };
+}
+function mgrPreview(p) {
+  if (p.error) return `<div class="preview bad"><b>Could not read ${esc(p.name)}</b><div>${esc(p.error)}</div><div class="acts"><button class="btn small" id="pvCancel">Try another file</button></div></div>`;
+  if (p.kind !== "sheet") return `<div class="preview bad"><b>That isn't a request sheet.</b><div class="acts"><button class="btn small" id="pvCancel">Try another file</button></div></div>`;
+  const r = p.res, prev = desk.latestSheet(S.date, p.region, p.cycle);
+  let changed = 0; if (prev) for (const [k, c] of Object.entries(r.cells)) if (!prev.cells[k] || prev.cells[k].cs !== c.cs) changed++;
+  const conv = Object.values(r.cells).filter(c => c.unit !== "CS" && c.orig != null).slice(0, 3);
+  return `<div class="preview">
+    <div class="overline">${esc(regName(p.region))} · ${mlong(p.cycle)} sheet${prev ? " · replaces your " + dlabel(prev.date) + " sheet" : ""}</div>
+    <div class="stats"><div class="stat ok"><b>${r.counts.cells}</b><span>lines read</span></div><div class="stat"><b>${r.counts.ea}</b><span>converted to cases</span></div><div class="stat ${r.problems.length ? "warn" : "ok"}"><b>${r.problems.length}</b><span>problems</span></div>${prev ? `<div class="stat"><b>${changed}</b><span>lines changed</span></div>` : ""}</div>
+    ${conv.length ? `<div class="hint">${conv.map(c => `${esc(itemName(c.sku))} ${mlabel(c.month)}: ${fmt(c.orig)} ${esc(c.unit)} = ${fmt(c.cs)} cases`).join(" · ")}</div>` : ""}
+    ${r.problems.length ? `<div class="problems">${r.problems.slice(0, 6).map(esc).join("<br>")}</div>` : ""}
+    ${prev ? `<input type="text" id="pvNote" placeholder="What changed? (the planner sees this)" style="width:100%;margin-top:6px">` : ""}
+    <div class="acts"><button class="btn primary" id="pvAdd">Send to central planning</button><button class="btn" id="pvCancel">Cancel</button></div></div>`;
+}
+
 /* ------------------------------------------------------------ outputs */
 function download(name, text, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 function exportBuyReview() { download(`buy-review-${S.date}.csv`, desk.releaseList(S.date).csv, "text/csv"); }
@@ -736,6 +819,8 @@ function workedExample() {
   ch("2026-09-18", "hold", "CA-TEST-03", "", null, "CS", "Winter trial: no sites or quantities yet", "thread:cascadia menu test / field count");
   for (const [date, target] of [["2026-09-16", "cal:OP-FR-02"], ["2026-09-16", kit], ["2026-09-17", "cal:GC-PROMO-01"], ["2026-09-17", mango]]) rec.decisions.push({ id: uid("d"), date, target, outcome: "no-change", note: "Logged as a change" });
   rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: "thread:cascadia menu test / field count", outcome: "waiting", note: "Winter trial: no sites or quantities yet" });
+  const done = new Set(rec.decisions.map(d => d.target));
+  for (const t of C.Desk(D, rec).threadsAt("2026-09-18")) if (!done.has(t.id)) rec.decisions.push({ id: uid("d"), date: "2026-09-18", target: t.id, outcome: "no-change", note: "Handled in September" });
   return rec;
 }
 render();
