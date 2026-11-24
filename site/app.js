@@ -721,8 +721,8 @@ function bindChangeCard() {
       if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
       commit();
       // what the change sent to purchasing by itself
-      const sent = (desk.purchaseNews(S.date).autos || []).filter(o => o.sku === c.sku && [c.month, c.to].includes(o.month) && o.by >= S.date);
-      if (sent.length) { S.flash.text += ` Added to purchasing's list: ${sent.map(o => `${o.action === "cut" ? `cut ${fmt(o.qty)} cases from ${o.po}` : `order ${fmt(o.qty)} cases`} for ${mlabel(o.month)}`).join(", ")}.`; renderPage(); }
+      const sent = (desk.purchaseNews(S.date).autos || []).filter(o => o.sku === c.sku && ([c.month, c.to].includes(o.month) || o.src === c.month) && o.by >= S.date);
+      if (sent.length) { S.flash.text += ` Added to purchasing's list: ${sent.map(o => `${o.action === "cut" ? `cut ${fmt(o.qty)} cases from ${o.po || "the next order"}` : `order ${fmt(o.qty)} cases`} for ${mlabel(o.month)}`).join(", ")}.`; renderPage(); }
     };
   });
 }
@@ -770,7 +770,7 @@ function pageSend(X) {
     <h2>Order actions</h2>
     ${oa.rows.length ? `<p class="sum"><b>${plural(oa.rows.length, "order action")}</b> from your plan changes and Late news. They go to purchasing as a second file, ${esc(ofile)}.</p>
       <table class="plain review"><tr><th>Since</th><th>Action</th><th>Item</th><th>Order</th><th class="n">Cases</th><th>By</th><th>Why</th></tr>
-      ${oa.rows.map(o => `<tr><td>${dlabel(o.date)}</td><td><b>${esc(o.actionText)}</b></td><td>${esc(itemName(o.sku))}</td><td>${esc(o.po || "new order")}</td><td class="n">${fmt(o.qty)}</td><td>${dlabel(o.by)}</td><td class="why" title="${esc(o.reason)}">${esc(o.reason)}</td></tr>`).join("")}</table>
+      ${oa.rows.map(o => `<tr><td>${dlabel(o.date)}</td><td><b>${esc(o.actionText)}</b></td><td>${esc(itemName(o.sku))}</td><td>${esc(o.po || (o.action === "cut" ? `${mlabel(o.month)} order` : "new order"))}</td><td class="n">${fmt(o.qty)}</td><td>${dlabel(o.by)}</td><td class="why" title="${esc(o.reason)}">${esc(o.reason)}</td></tr>`).join("")}</table>
       <div class="acts"><button class="btn" id="dlOrders">Download the order actions</button>${S.sentOrders === S.date ? ` <span class="hint">Saved ${esc(ofile)} to your downloads folder.</span>` : ""}</div>`
     : `<p class="hint">No order actions. A plan change sends its order here by itself; a Short in Late news can add one.</p>`}`;
   if ($("dlOrders")) $("dlOrders").onclick = () => { download(ofile, oa.csv, "text/csv"); S.sentOrders = S.date; renderPage(); };

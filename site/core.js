@@ -847,7 +847,7 @@
      *   request a requisition awaiting planner review */
     function purchaseNews(T) {
       if (newsCache[T]) return newsCache[T];
-      const lines = poAt(T), w = working(T), months = w.months || [], items = [], autos = [];   // autos: orders a plan change sends to purchasing by itself
+      const lines = poAt(T), w = working(T), months = w.months || [], items = [], autos = [], dropped = {};   // dropped: cases the plan took off an item's month   // autos: orders a plan change sends to purchasing by itself
       const planNow = (sku, m) => months.includes(m) ? netPlan(w.grid, sku, m) : null;
       const name = sku => ITEMS[sku] ? ITEMS[sku].name : sku;
       const lead = sku => (ITEMS[sku] || {}).lead_days || 0;
@@ -896,19 +896,27 @@
         }
         const cal = inputsAt(T).filter(x => x.kind === "calendar");
         for (const a of Object.values(agg)) {
-          const pos = lines.filter(l => l.sku === a.sku && l.month === a.month && l.open > 0);
-          const before = pos.filter(l => l.entered <= w.base.date), check = before.length ? a.check : 0;
+          const ordered = lines.filter(l => l.sku === a.sku && l.month === a.month && l.qty > 0), pos = ordered.filter(l => l.open > 0);
+          const before = ordered.filter(l => l.entered <= w.base.date), check = before.length ? a.check : 0;
           const net = Math.round((a.d - check) * 1000) / 1000;
           const dates = [a.d < 0 ? a.date : "", check ? w.base.date : ""].filter(Boolean).sort();
-          if (net <= -1 && pos.length) {
-            const used = pos.filter(l => l.entered <= (dates[dates.length - 1] || T)), open = used.reduce((t, l) => t + l.open, 0);
+          if (net <= -1 && ordered.length) {
+            const used = ordered.filter(l => l.entered <= (dates[dates.length - 1] || T)); if (!used.length) continue;
+            const open = used.reduce((t, l) => t + l.open, 0), when = dates[dates.length - 1] || w.base.date;
+            dropped[a.sku + "|" + a.month] = -net;
             // cases the supplier or buyer already cut from these orders count against the drop
-            const cut0 = used.reduce((t, l) => t + l.cancelled, 0), excess = Math.min(open, -net - cut0); if (excess < 1 || !used.length) continue;
+            const cut0 = used.reduce((t, l) => t + l.cancelled, 0), excess = Math.min(open, -net - cut0), over = -net - cut0 - open;
             const id = "much:" + a.sku + "@" + a.month, cut = askedOf(id, T).filter(o => o.action === "cut").reduce((t, o) => t + o.qty, 0);
             const how = [...a.parts.filter(p => p.d < 0).map(p => `${regionName(p.region)} ${p.text}${p.reason ? ` (${p.reason})` : ""}`), ...(check ? a.checkParts.map(p => `${regionName(p.region)}: set to ${fmt(p.value)} under Check, was ${fmt(p.last)}`) : [])];
-            const big = used.slice().sort((x, y) => y.open - x.open)[0];
-            if (excess - cut >= 1) autos.push({ id: "auto:" + id, item: id, auto: true, date: dates[dates.length - 1] || w.base.date, action: "cut", sku: a.sku, month: a.month, po: big.id,
+            const big = used.filter(l => l.open > 0).sort((x, y) => y.open - x.open)[0];
+            if (big && excess - cut >= 1) autos.push({ id: "auto:" + id, item: id, auto: true, date: when, action: "cut", sku: a.sku, month: a.month, po: big.id,
               qty: Math.round((excess - cut) * 100) / 100, by: big.due || big.due0, reason: `You lowered ${mLong(a.month)}: ${how.join("; ")}`, title: "From a plan change" });
+            // more than is still to come: the rest has arrived, so it comes off next month's order
+            if (over >= 1) {
+              const nm = addM(a.month, 1), nx = lines.filter(l => l.sku === a.sku && l.month === nm && l.open > 0).sort((x, y) => y.open - x.open)[0];
+              autos.push({ id: "auto:over:" + a.sku + "@" + a.month, item: "over:" + a.sku + "@" + a.month, auto: true, date: when, action: "cut", sku: a.sku, month: nm, src: a.month, po: nx ? nx.id : "",
+                qty: Math.round(over * 100) / 100, by: nx ? nx.due || nx.due0 : nm + "-01", reason: `${fmt(over)} cases of ${mLong(a.month)} already arrived, so they come off ${mLong(nm)}`, title: "From a plan change" });
+            }
           } else if (net >= 1 && a.d > 0) {
             // need date: a calendar event for the same region and month that arrived within three days of
             // the change (the rule Late news uses to close a calendar entry with a change); else the 1st
@@ -947,6 +955,8 @@
           prefill: { action: by < T ? "rush" : "more", qty: cs, by: q.need, po: "" }, change: { type: "add", region: q.by, sku: q.item, month: months.includes(m) ? m : months[0], qty: ea ? q.qty : cs, unit: ea ? "EA" : "CS", reason: `${q.id}: ${q.scope}` } });
       }
       for (const it of items) {
+        // a short the plan has since dropped at least as many cases from needs nothing more
+        if (it.kind === "short" && !it.done && (dropped[it.sku + "|" + it.month] || 0) >= it.need - 0.5) it.done = "cut";
         it.planText = planText(it.sku, it.month);
         it.asked = askedOf(it.id, T);
         it.handled = handledAt(it.id, T);
@@ -965,7 +975,7 @@
         .filter(o => (o.by || "") >= T).sort((a, b) => a.date.localeCompare(b.date) || a.sku.localeCompare(b.sku));
       const esc = v => /[",\n]/.test(String(v == null ? "" : v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v == null ? "" : v);
       const csv = [["Since", "Action", "SKU", "Item", "PO line", "Cases", "Needed by", "Why", "From"].join(","),
-        ...rows.map(o => [o.date, ACT[o.action], o.sku, ITEMS[o.sku].name, o.po || "new order", Math.round(o.qty * 100) / 100, o.by, o.reason, o.auto ? "plan change" : "Late news"].map(esc).join(","))];
+        ...rows.map(o => [o.date, ACT[o.action], o.sku, ITEMS[o.sku].name, o.po || (o.action === "cut" ? "next order" : "new order"), Math.round(o.qty * 100) / 100, o.by, o.reason, o.auto ? "plan change" : "Late news"].map(esc).join(","))];
       return { rows: rows.map(o => ({ ...o, actionText: ACT[o.action] })), csv: csv.join("\n") + "\n" };
     }
 
