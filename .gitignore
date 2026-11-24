@@ -14,3 +14,5 @@ site/data.js
 node_modules/
 # Session handoff notes; local only
 docs/HANDOFF.md
+# wrangler local build and dev state
+.wrangler/

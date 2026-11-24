@@ -157,10 +157,13 @@ function renderPage() {
   };
   const stepI = STEPS.findIndex(([id]) => id === S.tab);
   $("rail").innerHTML = STEPS.map(([id, n], i) => `<button class="step ${S.tab === id ? "on" : ""} ${stepI > i ? "past" : ""} ${id === "check" && X.rv.open && !X.pub ? "warn" : ""}" data-step="${id}"><span class="no">${i + 1}</span><span class="nm">${n}</span><span class="st">${esc(railInfo[id])}</span></button>`).join("");
-  $("side").innerHTML = SIDE.map(([id, n]) => `<button class="sidelink ${S.tab === id ? "on" : ""}" data-step="${id}">${n}</button>`).join("") + `<a class="sidelink" href="?role=manager" target="_blank" rel="noopener">Submanager view ↗</a><button class="sidelink" id="resetDemo">Reset demo</button>`;
+  $("side").innerHTML = SIDE.map(([id, n]) => `<button class="sidelink ${S.tab === id ? "on" : ""}" data-step="${id}">${n}</button>`).join("") + `<a class="sidelink" href="?role=manager" target="_blank" rel="noopener">Submanager view ↗</a><button class="sidelink" id="resetDemo">Reset demo</button><button class="sidelink" id="tourStart" title="Reset the demo and show each step of the demo script beside the thing to click">Walkthrough</button>`;
   document.querySelectorAll("[data-step]").forEach(b => b.onclick = () => go(b.dataset.step));
-  // back to Tue Oct 6 with September settled: clears everything this browser saved, as the demo's start does
-  $("resetDemo").onclick = () => { if (!confirm("Reset the demo? This clears everything saved in this browser.")) return; try { Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k)); } catch (e) {} location.href = location.pathname + "?example=1"; };
+  // back to Tue Oct 6 with September settled: clears everything this browser saved, as the demo's start does.
+  // An open walkthrough goes back to step 1 with it.
+  const resetDemo = msg => { if (!confirm(msg)) return false; try { Object.keys(localStorage).filter(k => k.startsWith("supplydesk.v3.")).forEach(k => localStorage.removeItem(k)); } catch (e) {} location.href = location.pathname + "?example=1"; return true; };
+  $("resetDemo").onclick = () => { if (resetDemo("Reset the demo? This clears everything saved in this browser.") && window.Tour && Tour.active()) Tour.begin(); };
+  $("tourStart").onclick = () => { if (resetDemo("Start the walkthrough? It resets the demo first, clearing everything saved in this browser.") && window.Tour) Tour.begin(); };
   (PAGES[S.tab] || pageSheets)(X);
 }
 const PAGES = { sheets: pageSheets, check: pageCheck, publish: pagePublish, news: pageNews, send: pageSend, history: pageHistory, ask: pageAsk };

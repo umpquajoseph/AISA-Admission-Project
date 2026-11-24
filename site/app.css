@@ -329,3 +329,15 @@ svg.chart .pt.sales { fill: var(--ok); }
 .brand, .daypick, .today .btn, .sidelink { white-space: nowrap; }
 .today { min-width: 0; }
 .today .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* demo walkthrough (tour.js): a popup beside the thing to click, and a ring that lets clicks through */
+.tourring { position: fixed; z-index: 50; pointer-events: none; border: 2px solid var(--accent); box-shadow: 0 0 0 4px rgba(47, 111, 214, .18); }
+.tourbox { position: fixed; z-index: 51; pointer-events: none; width: 340px; max-width: calc(100vw - 16px); background: var(--card); border: 1px solid var(--accent); box-shadow: 0 6px 24px rgba(28, 30, 33, .16); padding: var(--s) var(--m) var(--m); display: flex; flex-direction: column; gap: 6px; }
+.tourtop { display: flex; align-items: center; justify-content: space-between; }
+.tourtop .hint { font-size: var(--f-small); }
+.tourclick b { font-weight: 600; }
+.tourshows { font-weight: 500; }
+.tourclick code { font-family: var(--mono); font-size: 12.5px; background: var(--active); padding: 0 3px; word-break: break-all; }
+.tourclick { font-size: var(--f-hint); border-top: 1px solid var(--border); padding-top: 6px; }
+.tourbox button { pointer-events: auto; }
+.tourbtns { display: flex; justify-content: space-between; margin-top: 2px; }
