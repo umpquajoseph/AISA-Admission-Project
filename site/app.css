@@ -274,3 +274,9 @@ body.manager .topbar .tab.on { background: var(--ok); }
 table.review tr.sub td { background: var(--bg); }
 table.review tr.grp td { font-weight: 400; }
 .toggle { cursor: pointer; color: var(--accent); }
+
+/* change card */
+.ccard { background: var(--card); border: 1px solid var(--accent); padding: var(--s) var(--m); margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.ccard.ai { border-color: #8e6bd6; background: #f6f2fd; }
+.ccard input[data-f="reason"] { width: 100%; }
+.ccard .calc { font-family: var(--mono); font-size: var(--f-mono); color: var(--fg); }

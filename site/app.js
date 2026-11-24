@@ -145,6 +145,7 @@ function pageInbox() {
       <div class="mhead" data-toggle="${esc(id)}"><span class="pill ${th.kind}">${th.kind === "email" ? "Email" : "Calendar"}</span><b>${esc(th.title)}</b>${th.region ? `<span class="reg">${esc(regName(th.region))}</span>` : ""}${th.items.length > 1 ? `<span class="hint">${th.items.length}</span>` : ""}<span class="hint">${dlabel(last.date)}</span>${waiting ? `<span class="pill Scenario" title="${esc(t.decision.note || "")}">waiting</span>` : ""}</div>
       ${open ? `<div class="mbody">${th.items.map((x, i) => msgHtml(x, i === th.items.length - 1 || S.open[id + ":all"])).join("")}
         <div class="acts"><button class="btn small primary" data-work="${esc(id)}">Log a change</button><button class="btn small" data-decide="${esc(id)}|no-change">No change</button>${waiting ? "" : `<button class="btn small" data-decide="${esc(id)}|waiting">Waiting on…</button>`}</div>
+        ${S.cc && S.cc.thread === id ? changeCardHtml() : ""}
         ${S.pending && S.pending.target === id ? `<form class="inline" id="decForm"><input type="text" id="decNote" placeholder="${S.pending.outcome === "waiting" ? "Waiting on whom?" : "Why? (optional)"}" autofocus><button class="btn small primary">Save</button><button type="button" class="btn small" id="decCancel">Cancel</button></form>` : ""}</div>` : ""}
     </div>`;
   };
@@ -176,7 +177,8 @@ function msgHtml(x, full) {
 function bindInbox() {
   document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => { S.open[b.dataset.toggle] = !S.open[b.dataset.toggle]; renderPage(); });
   document.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { S.sheetView = S.sheetView === b.dataset.sheet ? null : b.dataset.sheet; renderPage(); });
-  document.querySelectorAll("[data-work]").forEach(b => b.onclick = () => { S.working = b.dataset.work; S.tab = "plan"; const th = desk.threadsAt(S.date).find(t => t.id === S.working); if (th) { const m = guessMonth(th); if (m) S.planMonth = m; if (th.region) { const k = S.sel && S.sel.split("|"); if (!k || k[0] !== th.region) S.sel = null; } } renderPage(); });
+  document.querySelectorAll("[data-work]").forEach(b => b.onclick = () => { const th = desk.threadsAt(S.date).find(t => t.id === b.dataset.work); S.cc = newCard(th); renderPage(); });
+  bindChangeCard();
   document.querySelectorAll("[data-decide]").forEach(b => b.onclick = () => { const [target, outcome] = b.dataset.decide.split("|"); S.pending = { target, outcome }; renderPage(); setTimeout(() => $("decNote") && $("decNote").focus()); });
   const df = $("decForm");
   if (df) {
@@ -191,6 +193,58 @@ function bindInbox() {
   document.querySelectorAll("[data-useall]").forEach(b => b.onclick = () => { const s = desk.needs(S.date).sheets.find(x => x.sheet.id === b.dataset.useall); useRequests(s.sheet.id, s.lines.map(l => l.key)); });
   document.querySelectorAll("[data-keepall]").forEach(b => b.onclick = () => { const s = desk.needs(S.date).sheets.find(x => x.sheet.id === b.dataset.keepall); keepPlan(s.sheet.id, s.lines.map(l => l.key)); });
   bindAddBox();
+}
+/* the change card: one typed change, filled by hand or by the assistant, saved against a message */
+const CTYPES = [["add", "Add"], ["set", "Set total"], ["move", "Move"], ["hold", "Hold"], ["scenario", "Scenario"]];
+function newCard(th, init = {}) {
+  const plan = desk.planAt(S.date), months = plan ? plan.months : [];
+  return { thread: th.id, ref: th.kind === "calendar" ? th.id.replace(/^cal:/, "") : th.id, type: "add", region: th.region || D.regions[0].code, sku: D.items[0].sku, month: guessMonth(th) || months[0], qty: "", unit: "CS", to: null, reason: th.title, quote: "", ...init };
+}
+function cardCalc(c) {
+  if (c.type === "hold") return "Open question · no numbers";
+  const q = parseFloat(c.qty); if (isNaN(q)) return "";
+  const it = ITEMS[c.sku], w = desk.working(S.date), cur = (w.grid[c.region + "|" + c.sku] || {})[c.month];
+  const cs = c.unit === "EA" ? q / it.ea_per_case : q, conv = c.unit === "EA" ? `${fmt(q)} ÷ ${it.ea_per_case} = ${fmt(cs)} CS · ` : "";
+  if (cur == null) return `${conv}no plan line for ${regName(c.region)}`;
+  if (c.type === "add") return `${conv}${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur + cs)}`;
+  if (c.type === "set") { const prev = R.changes.filter(x => x.ref === c.ref && x.key === `${c.region}|${c.sku}|${c.month}` && !x.removed_on).pop(); return `${conv}${prev ? `replaces ${fmt(prev.qty)} ${prev.unit === "EA" ? it.ea_unit.toLowerCase() + "s" : "CS"}` : `set ${mlabel(c.month)} to ${fmt(cs)}`}`; }
+  if (c.type === "move") return `${mlabel(c.month)} ${fmt(cur)} → ${fmt(cur - cs)} · ${mlabel(c.to || "")} +${fmt(cs)}`;
+  return `${conv}scenario · would be ${fmt(cur + cs)}, not in plan`;
+}
+function changeCardHtml(c = S.cc, idx = null) {
+  const plan = desk.planAt(S.date), months = plan ? plan.months : [], it = ITEMS[c.sku], k = idx == null ? "" : idx;
+  return `<form class="ccard ${c.ai ? "ai" : ""}" data-card="${k}">
+    ${c.ai ? `<div class="overline">Drafted by the assistant</div>` : ""}
+    <div class="seg small">${CTYPES.map(([t, n]) => `<button type="button" class="${c.type === t ? "on" : ""}" data-ctype="${t}">${n}</button>`).join("")}</div>
+    ${c.type === "hold" ? "" : `<div class="row">
+      <select data-f="region">${D.regions.map(r => `<option value="${r.code}" ${r.code === c.region ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
+      <select data-f="sku">${D.items.map(i => `<option value="${i.sku}" ${i.sku === c.sku ? "selected" : ""}>${esc(i.name)}</option>`).join("")}</select>
+      <select data-f="month">${months.map(m => `<option value="${m}" ${m === c.month ? "selected" : ""}>${mlabel(m)}</option>`).join("")}</select>
+      <input type="number" step="any" data-f="qty" value="${esc(c.qty)}" placeholder="${c.type === "set" ? "total" : "qty"}" style="width:80px">
+      ${c.type === "move" ? `<span>to</span><select data-f="to">${months.filter(m => m !== c.month).map(m => `<option value="${m}" ${m === c.to ? "selected" : ""}>${mlabel(m)}</option>`).join("")}</select>`
+        : `<select data-f="unit"><option value="CS" ${c.unit === "CS" ? "selected" : ""}>cases</option><option value="EA" ${c.unit === "EA" ? "selected" : ""}>${esc(it.ea_unit.toLowerCase())}s</option></select>`}
+    </div>`}
+    <input type="text" data-f="reason" value="${esc(c.reason)}" placeholder="Why (purchasing reads this)">
+    ${c.quote ? `<div class="quote">“${esc(c.quote)}”</div>` : ""}
+    <div class="row"><span class="calc">${esc(cardCalc(c))}</span><span class="spacer"></span><button class="btn small primary">${c.ai ? "Approve" : "Save"}</button><button type="button" class="btn small" data-cclose="${k}">${c.ai ? "Reject" : "Close"}</button></div>
+  </form>`;
+}
+function bindChangeCard() {
+  document.querySelectorAll("form.ccard").forEach(f => {
+    const idx = f.dataset.card, get = () => idx === "" ? S.cc : S.aiDrafts[+idx], put = c => { if (idx === "") S.cc = c; else S.aiDrafts[+idx] = c; };
+    f.querySelectorAll("[data-ctype]").forEach(b => b.onclick = () => { const c = get(); c.type = b.dataset.ctype; if (c.type === "move" && !c.to) { const ms = desk.planAt(S.date).months; c.to = ms[ms.indexOf(c.month) + 1] || ms[0]; c.unit = "CS"; } renderPage(); });
+    f.querySelectorAll("[data-f]").forEach(el => el.oninput = el.onchange = () => { const c = get(); c[el.dataset.f] = el.value; const calc = f.querySelector(".calc"); if (calc) calc.textContent = cardCalc(c); if (el.tagName === "SELECT" && el.dataset.f !== "region") renderPage(); });
+    f.querySelector("[data-cclose]").onclick = () => { if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1); renderPage(); };
+    f.onsubmit = e => {
+      e.preventDefault();
+      const c = get();
+      if (c.type !== "hold" && isNaN(parseFloat(c.qty))) { const q = f.querySelector('[data-f="qty"]'); if (q) q.focus(); return; }
+      R.changes.push({ id: uid("c"), date: S.date, type: c.type, ref: c.ref, key: c.type === "hold" ? "" : `${c.region}|${c.sku}|${c.month}`, qty: c.type === "hold" ? null : +c.qty, unit: c.type === "move" ? "CS" : c.unit, to: c.type === "move" ? c.to : null, reason: c.reason, source: c.thread, quote: c.quote || "", ai: !!c.ai });
+      R.decisions.push({ id: uid("d"), date: S.date, target: c.thread, outcome: c.type === "hold" ? "waiting" : "changed", note: c.reason });
+      if (idx === "") S.cc = null; else S.aiDrafts.splice(+idx, 1);
+      commit();
+    };
+  });
 }
 function threadTitle(id) { const t = desk.threadsAt(S.date).find(x => x.id === id); return t ? t.title : id; }
 function guessMonth(th) {
@@ -654,6 +708,7 @@ function logEntries(T) {
   const keepN = {};
   for (const d of R.decisions.filter(d => d.date <= T)) {
     if (d.outcome === "keep") { const k = d.date + "|" + d.target.split("|")[0]; keepN[k] = (keepN[k] || 0) + 1; continue; }
+    if (d.outcome === "changed" || d.target.startsWith("draft:")) continue;
     out.push({ date: d.date, kind: "you", text: `You marked <b>${esc(srcName(d.target))}</b> as ${d.outcome === "waiting" ? "waiting on someone" : "no change needed"}.`, why: d.note });
   }
   for (const [k, n] of Object.entries(keepN)) { const [date, t] = k.split("|"); const s = desk.byId[t.slice(5)]; out.push({ date, kind: "you", text: `You kept the plan on ${n} line${n > 1 ? "s" : ""} where ${esc(s ? regName(s.region) : "a")}'s sheet asked for something different.` }); }
