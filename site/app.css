@@ -49,7 +49,7 @@ button:focus-visible, a:focus-visible, td:focus-visible, select:focus-visible { 
 .topbar .spacer { flex: 1; }
 .today { display: flex; align-items: center; gap: 6px; border-left: 1px solid var(--border); padding-left: var(--l); height: 100%; }
 .daylbl { color: var(--hint); }
-.daypick { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.daypick { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--border); cursor: pointer; }
 .daypick b { font-weight: 600; }
 .today .hint { font-size: var(--f-body); }
 .daypick .caret { color: var(--hint); font-size: 12px; }
@@ -306,6 +306,11 @@ svg.chart .pt.sales { fill: var(--ok); }
   :root { --page-margin: 16px; }
   .topbar { height: auto; flex-wrap: wrap; padding-top: 6px; padding-bottom: 6px; gap: var(--s); }
   .today { border-left: 0; padding-left: 0; flex-wrap: wrap; }
+  .today, .side { height: auto; }
+  .side { flex-wrap: wrap; }
+  .sidelink { padding: 6px var(--s); }
+  .today .hint { white-space: normal; }
+  table.plain:not(.mini) { display: block; max-width: 100%; overflow-x: auto; }
   .rail { overflow-x: auto; }
   .step { min-width: 120px; }
   .step .st { display: none; }
