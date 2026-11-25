@@ -89,7 +89,7 @@ function renderClock() {
     <label class="daypick"><select id="daySel" title="Pick a day: the list shows days when something arrived">${days.map(d => `<option value="${d}" ${d === S.date ? "selected" : ""}>${dlong(d)}${dayText(d) ? " · " + dayText(d) : ""}</option>`).join("")}</select><b>${dlong(S.date)}</b><span class="caret">▾</span></label>
     <button class="btn" id="nextDay" ${next ? "" : "disabled"} title="${next ? esc(dlong(next) + (dayText(next) ? ": " + dayText(next) : "")) : "No later news"}">Next day ▶</button>
     ${dayText(S.date) ? `<span class="hint">${esc(dayText(S.date))}</span>` : ""}
-    ${synth ? `<span class="pill Scenario" title="The real packet stops Fri Sep 18, 2026. October files are made up from the September ones.">made-up October data</span>` : ""}`;
+    ${synth ? `<span class="pill Scenario" title="The real packet stops Fri Sep 18, 2026. October files are made up from the September ones.">made-up data</span>` : ""}`;
   $("prevDay").onclick = () => prev && setDate(prev);
   $("nextDay").onclick = () => next && setDate(next);
   $("daySel").onchange = e => setDate(e.target.value);
@@ -1106,7 +1106,7 @@ function pageAsk() {
     : `<button class="btn small primary" data-approve="${k}">Approve</button> <span>${esc(a.label)}</span>${a.checks && a.checks.length ? ` <span class="warn-text">${a.checks.map(esc).join(" · ")}</span>` : ""}${a.gone ? ` <span class="hint">${esc(a.gone)}</span>` : ""}`}</div>`;
   $("page").innerHTML = `<div class="ask">
     ${head("Ask", "Ask about the plan, a sheet, an email or a change, or tell it what to do with a Late news item. Answers come only from this desk's record. Nothing changes until you click Approve.")}
-    ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer)}</div>
+    ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")}</div>
       ${(h.actions || []).map((a, j) => actHtml(a, `${i}|${j}`)).join("")}
       <div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}${h.looked && h.looked.length ? ` · looked up ${esc(h.looked.join(", "))}` : ""}</div></div>`).join("")}
     <form class="askbox" id="askForm"><textarea id="askQ" placeholder="${hist.length ? "Reply, or ask a follow-up" : "Ask about the plan, or say what to do with a Late news item"}">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : hist.length ? "Reply" : "Ask"}</button></form>

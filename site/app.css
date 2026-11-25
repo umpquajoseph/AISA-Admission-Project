@@ -327,7 +327,8 @@ svg.chart .pt.sales { fill: var(--ok); }
 .tocheck li.jump[data-jump]:hover { text-decoration: underline; }
 .flash.quiet { border-left-color: var(--border); color: var(--hint); }
 .brand, .daypick, .today .btn, .sidelink { white-space: nowrap; }
-.today { min-width: 0; }
+.today { min-width: 0; overflow: hidden; }
+.today .pill { flex: none; }
 .today .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* demo walkthrough (tour.js): a popup beside the thing to click, and a ring that lets clicks through */
@@ -341,3 +342,4 @@ svg.chart .pt.sales { fill: var(--ok); }
 .tourclick { font-size: var(--f-hint); border-top: 1px solid var(--border); padding-top: 6px; }
 .tourbox button { pointer-events: auto; }
 .tourbtns { display: flex; justify-content: space-between; margin-top: 2px; }
+@media (max-width: 1150px) { .daylbl, .today .hint { display: none; } .topbar { gap: var(--m); } .today { padding-left: var(--m); } }
