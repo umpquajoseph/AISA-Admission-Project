@@ -1,12 +1,15 @@
 # Supply Desk
 
 A working prototype for Dutch Bros' central supply planner. The six regional
-sheets come in, the app drafts the plan, the planner settles only the lines
-that look wrong, publishes, logs late news as typed changes, and hands
-purchasing one list of what changed and why. Design:
-[docs/WORKFLOW.md](docs/WORKFLOW.md). Original spec: [docs/SPEC.md](docs/SPEC.md).
+sheets come in, the app drafts the plan, the planner settles only the lines that
+look wrong, publishes, logs late news as typed changes, and hands purchasing one
+list of what changed and why.
 
-## Run it locally
+- [docs/DESIGN.md](docs/DESIGN.md): what it does, the checks, how results were checked.
+- [docs/DEMO.md](docs/DEMO.md): the demo script.
+- [synthetic/README.md](synthetic/README.md): the made-up October files.
+
+## Run it
 
 The packet folder `Dutch_Bros_Techincal_Packet/` must sit in this folder (it is
 git-ignored).
@@ -19,27 +22,15 @@ npm run dev
 ```
 
 Open http://127.0.0.1:8788. For the assistant, put `ANTHROPIC_API_KEY=...` in a
-git-ignored `.dev.vars`; without it the AI buttons say "Assistant not connected".
+git-ignored `.dev.vars`.
 
-| Link | Opens |
+## Files
+
+| Path | What it is |
 |---|---|
-| `/?example=1` | September done (published, late news logged), ready for October |
-| `/?role=manager` | A regional manager's page; in a second tab it feeds the planner's Inbox live |
-
-## Screens
-
-| Step | What it is for |
-|---|---|
-| Sheets in | Six region boxes; open a sheet to see or correct what it asks for |
-| Check | Only the lines that fail a check against shipments and sales |
-| Publish | The draft until published, then the plan in force; click a number for its story and what is on order |
-| Late news | Emails, submanager requests, calendar entries, late sheets and purchasing news (Short, Too late, requisitions); plan changes send their order actions by themselves |
-| Send to purchasing | The plan in force, every line, with changes since publishing marked; plus the order actions (order more, cut, rush) as a second CSV |
-| History | Everything that happened; trends; compare versions |
-| Ask | Questions answered from the record, with sources |
-
-Data: September 2026 is real (the packet stops Sep 18). October is synthetic,
-built from the real files by `pipeline/make_synthetic.py`, and labelled on screen.
-Purchasing news reads the buyer's watch list in `Purchasing/Exports` (one buyer's
-slice of pooled orders, no stock on hand) and compares it with the plan for all
-regions together.
+| `site/core.js` | The engine: reads sheets and emails, builds the plan as of a date |
+| `site/app.js`, `site/app.css` | The screens |
+| `site/tour.js`, `site/demo-steps.js` | The in-app demo walkthrough |
+| `lib/assistant.js`, `functions/api/` | The assistant (Cloudflare Pages Functions) |
+| `dev/server.mjs` | Local server for the site and the assistant |
+| `pipeline/` | Builds `site/data.js` and the synthetic October files from the packet |

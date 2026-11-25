@@ -1,8 +1,6 @@
-/* Supply Desk page. One record, one guided path.
- * Head manager (default): 1 Sheets in → 2 Check → 3 Publish → 4 Late news → 5 Send to purchasing.
- * History and Ask sit to the side. ?role=manager is the submanager page: region → sheet → late request → done.
- * The day control sets the desk's date. Anything added or changed is dated to it.
- * Reading and plan logic live in core.js; this file only draws and records. */
+/* Supply Desk screens. Head manager: Sheets in → Check → Publish → Late news → Send to purchasing,
+ * with History and Ask to the side. ?role=manager is the submanager page.
+ * Everything is dated to the day control. Plan logic lives in core.js; this file draws and records. */
 "use strict";
 const D = window.DATA, C = window.Core;
 const START = D.releases.filter(r => r.disposition === "Posted").map(r => r.logged).sort()[0];
@@ -17,7 +15,7 @@ const SIDE = [["history", "History"], ["ask", "Ask"]];
 const KEY = "supplydesk.v3.";
 function load(k, d) { try { const v = localStorage.getItem(KEY + k); return v ? JSON.parse(v) : d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch (e) { alert("This browser would not save the desk record: " + e.message); } }
-const emptyRecord = () => ({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] });
+const emptyRecord = () => ({ inputs: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] });
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 let R = { ...emptyRecord(), ...load("record", {}) };
 let desk = C.Desk(D, R);
@@ -61,7 +59,6 @@ const units = sku => ((ITEMS[sku] || {}).ea_unit || "unit").toLowerCase() + "s";
 const unitWord = (sku, u) => u === "EA" ? units(sku) : "cases";
 const plural = (n, w, ws = w + "s") => `${fmt(n)} ${n === 1 ? w : ws}`;
 const who = x => x.kind === "email" ? x.mail.sender.replace(/<.*>/, "").replace(/"/g, "").trim() : x.kind === "calendar" ? "Event calendar" : x.kind === "sheet" ? (x.author || regName(x.region)) : "Central planning";
-const nextMonth = d => { const [y, m] = d.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`; };
 
 /* ------------------------------------------------------------ the day control: "Day: Fri, Oct 9 · Next day ▶" */
 const ARRIVALS = {};                                      // date -> inputs that arrived that day
@@ -973,7 +970,7 @@ function pageHistory() {
   toggles();
   if (S.open.record) {
     $("recExport").onclick = () => download(`supply-desk-record-${S.date}.json`, JSON.stringify(R, null, 1), "application/json");
-    $("recImport").onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { const v = JSON.parse(t); if (!v.edits || !v.inputs) throw 0; R = { ...emptyRecord(), ...v }; commit(); } catch { alert("That file is not a desk record copy."); } }); };
+    $("recImport").onchange = e => { const f = e.target.files[0]; if (!f) return; f.text().then(t => { try { const v = JSON.parse(t); if (!v.inputs) throw 0; R = { ...emptyRecord(), ...v }; commit(); } catch { alert("That file is not a desk record copy."); } }); };
     $("recExample").onclick = () => { if (confirm("Replace this browser's record with the September example? Save a copy first to keep it.")) { R = workedExample(); S.date = desk.sheets.filter(s => s.cycle === "2026-10").map(s => s.date).sort()[0]; save("date", S.date); S.from = "sheets"; commit(); } };
     $("recClear").onclick = () => { if (confirm("Delete everything added, changed, decided and published in this browser? Save a copy first to keep it.")) { R = emptyRecord(); commit(); } };
   }
@@ -992,10 +989,6 @@ function logEntries(T) {
       out.push({ date: x.date, kind: "plan", text: `Plan file <b>${esc(short(r.file).replace(/\.xlsx$/, ""))}</b> ${verb}.`, why: r.note });
     } else if (x.kind === "email") out.push({ date: x.date, time: x.time, kind: "msg", text: `${x.from === "manager" ? "Request" : "Email"} from ${esc(who(x))}: <b>${esc(x.mail.subject)}</b>${x.origin === "added" && x.from !== "manager" ? " (added here)" : ""}`, body: x.mail.body });
     else if (x.kind === "calendar") out.push({ date: x.date, kind: "msg", text: `Calendar: <b>${esc(x.event.id)}</b> ${esc(x.event.type)}, ${esc(x.event.status.toLowerCase())}`, why: x.event.detail });
-  }
-  for (const e of R.edits.filter(e => e.date <= T)) {
-    const [r, sku, m] = e.key.split("|");
-    out.push({ date: e.date, kind: "you", text: `You changed ${esc(regName(r))} · ${esc(itemName(sku))} · ${mlabel(m)} by <b>${sign(e.dv)}</b> cases. <a data-goto="plan:${e.key}">Open</a>`, why: e.reason });
   }
   for (const c of R.changes.filter(c => c.date <= T && ["add", "set", "move"].includes(c.type))) {
     const [r, sku, m] = (c.key || "||").split("|");

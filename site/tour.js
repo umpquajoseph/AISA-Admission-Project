@@ -1,11 +1,6 @@
-/* The demo walkthrough: one small popup per step of docs/DEMO.md, beside the thing to click.
- * Its description and click come from demo-steps.js (the same file DEMO.md's table is written from). Each step's
- * `at` below picks what to point at from the desk's state, so a step with several clicks
- * follows along as they are made, and `DONE` moves to the next step once the last one is made
- * (Next still works for a step with no click). Nothing here clicks for you or blocks a click: the popup
- * sits beside its target, the ring and the popup (all but its buttons) let clicks through, and both are re-placed
- * whenever app.js redraws. The step is kept in localStorage, so the submanager tab (step 11)
- * shows the same step, and Reset demo keeps the walkthrough open. */
+/* Demo walkthrough: one popup per step of demo-steps.js, beside the thing to click.
+ * `at` picks the target from the desk's state; `DONE` moves on once the step's clicks are made.
+ * The popup never blocks a click and is re-placed whenever app.js redraws. */
 "use strict";
 window.Tour = (() => {
   const KEY = "supplydesk.tour", STEPS = window.DEMO_STEPS || [];

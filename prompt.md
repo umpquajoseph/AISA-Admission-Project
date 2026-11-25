@@ -1,16 +1,8 @@
 # AISA AI tech team: admissions project
 
-Technical round. Due **Sat 28 Nov 2026**. The task line is in
-`C:\Life\planner\tasks.md`.
-
 The data packet is `Dutch_Bros_Techincal_Packet/` in this folder, extracted
-from `Downloads\Dutch_Bros_Techincal_Packet.zip` on 2026-11-23 (536 files,
-252 MB). It is git-ignored, so it lives on this PC only. The zip in Downloads
-is the backup.
-
-The packet has POS_R04-R06 parquet files only. `POS_reference/POS_Partition_Index.csv`
-also lists R01 (148 MB), R02 (60 MB) and R03 (100 MB), which are not in the zip.
-Whether they were offered separately is not known yet.
+from `Downloads\Dutch_Bros_Techincal_Packet.zip` on 2026-11-23. POS history
+covers regions R04-R06 only.
 
 ## The prompt, as sent
 

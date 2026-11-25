@@ -1,7 +1,5 @@
 /* Supply Desk core: reads sheets and emails, and works out the plan as of a date.
- * No page code here, so the same file runs in the browser and in Node checks.
- * Packet files (bundled raw by pipeline/build_data.py) and files the planner
- * pastes, drops or picks up from a folder all go through these functions. */
+ * No page code here. Packet files and files the planner adds go through the same readers. */
 "use strict";
 (function (G) {
   const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -228,13 +226,12 @@
   /* ---------------------------------------------------------------- the desk as of a date */
   /* Desk(D, record): D is the bundled packet; record holds what the planner added and did:
    *   inputs    sheets and emails added on a date (pasted, dropped, from a folder)
-   *   edits     changes to a plan cell: +/- cases, against the plan in force when made
    *   decisions what was decided about an input or a request line (no change, keep plan, waiting)
    *   versions  plans published here; each becomes the plan in force from its date */
   function Desk(D, record) {
     const ref = D;
-    record = Object.assign({ inputs: [], edits: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] }, record || {});
-    const OPT = Object.assign({ tol: 0.35, min: 30, swingTol: 0.15, swingMin: 10 }, record.options || {});
+    record = Object.assign({ inputs: [], decisions: [], versions: [], changes: [], reportEdits: [], removed: [], orders: [] }, record || {});
+    const OPT = { tol: 0.35, min: 30, swingTol: 0.15, swingMin: 10 };
     const ITEMS = Object.fromEntries(D.items.map(i => [i.sku, i]));
     const regionName = c => (D.regions.find(r => r.code === c) || {}).name || c;
 
@@ -323,25 +320,9 @@
     const inForce = v => v.role === "past" || v.role === "published";
 
     function baseAt(T) { const v = versionsAll.filter(v => v.date <= T && inForce(v)); return v[v.length - 1] || null; }
-    function prevBase(base) { const v = versionsAll.filter(v => inForce(v) && v.date <= base.date && v.id !== base.id && versionsAll.indexOf(v) < versionsAll.indexOf(base)); return v[v.length - 1] || null; }
-
-    const editLive = (e, T) => e.date <= T && !(e.removed_on && e.removed_on <= T);
-    function editsAt(T, base) {
-      base = base || baseAt(T);
-      return record.edits.filter(e => base && e.base === base.id && editLive(e, T) && e.status !== "draft" && e.status !== "rejected");
-    }
     function planAt(T) {
-      const base = baseAt(T); if (!base) return null;
-      const w = working(T);
-      const grid = {}, applied = {};
-      for (const [k, row] of Object.entries(w.grid)) grid[k] = { ...row };
-      for (const e of editsAt(T, base)) {
-        const [r, sku, m] = e.key.split("|"), k = r + "|" + sku;
-        if (!grid[k] || grid[k][m] == null) continue;
-        grid[k][m] = Math.round((grid[k][m] + e.dv) * 1000) / 1000;
-        (applied[e.key] = applied[e.key] || []).push(e);
-      }
-      return { base, grid, applied, months: base.months };
+      const w = working(T); if (!w.base) return null;
+      return { base: w.base, grid: Object.fromEntries(Object.entries(w.grid).map(([k, row]) => [k, { ...row }])), months: w.months };
     }
 
     const inputsAt = T => inputs.filter(x => x.date && x.date <= T);
@@ -369,65 +350,29 @@
 
     const decisionAt = (T, target) => { const d = record.decisions.filter(d => d.target === target && d.date <= T); return d[d.length - 1] || null; };
 
-    /* checks on one plan cell */
-    const GAP = 0.10, SWING = 0.15, MIN = 10;
-    function checks(T, plan, key) {
-      const [r, sku, m] = key.split("|"), k = r + "|" + sku, v = plan.grid[k] && plan.grid[k][m];
-      const out = [];
-      const req = requestAt(T, key);
-      if (req && req.cell.cs != null && v != null) {
-        const d = req.cell.cs - v, bad = Math.abs(d) >= MIN && Math.abs(d) > GAP * Math.max(v, 1);
-        out.push({ id: "request", ok: !bad, text: bad ? `${regionName(r)} asks ${fmt(req.cell.cs)}, ${sign(d)} from the plan` : `Within 10% of ${regionName(r)}'s request (${fmt(req.cell.cs)})` });
-      }
-      const pb = prevBase(plan.base);
-      if (pb && pb.grid[k] && pb.grid[k][m] != null && v != null) {
-        const p = pb.grid[k][m], d = v - p, bad = Math.abs(d) >= MIN && Math.abs(d) > SWING * Math.max(p, 1);
-        out.push({ id: "swing", ok: !bad, text: bad ? `Moved ${sign(d)} (${Math.round(d / p * 100)}%) since the ${pb.name} plan (${fmt(p)})` : `Within 15% of the ${pb.name} plan (${fmt(p)})` });
-      }
-      return out;
-    }
     const fmt = v => v == null ? "—" : (Math.round(v * 10) / 10).toLocaleString("en-US");
     const sign = v => (v > 0 ? "+" : "") + fmt(v);
 
     /* what needs the planner, as of T */
     function needs(T) {
-      const plan = planAt(T), out = { missing: [], sheets: [], inputs: [], waiting: [] };
-      if (!plan) return out;
+      const out = { inputs: [], waiting: [] };
+      if (!baseAt(T)) return out;
       // Anything that arrived before the latest packet plan was posted is taken as already in it.
       // A version published here does not clear anything: what you have not decided stays open.
       const packetPosted = versionsAll.filter(v => v.role === "past" && v.date <= T).pop();
       const since = packetPosted ? packetPosted.date : "";
-      const cyc = cycleAt(T);
-      for (const r of D.regions) if (cyc && !latestSheet(T, r.code, cyc)) out.missing.push({ region: r.code, cycle: cyc });
-      for (const r of D.regions) {
-        const s = cyc && latestSheet(T, r.code, cyc);
-        if (!s || s.date <= since) continue;
-        const lines = [];
-        for (const [key, c] of Object.entries(s.cells)) {
-          const [, sku, m] = key.split("|"); const row = plan.grid[r.code + "|" + sku];
-          if (!row || row[m] == null || c.cs == null) continue;
-          const d = c.cs - row[m];
-          if (Math.abs(d) < MIN || Math.abs(d) <= GAP * Math.max(row[m], 1)) continue;
-          const dec = decisionAt(T, "line:" + s.id + "|" + key);
-          if (dec) continue;
-          lines.push({ key, plan: row[m], asked: c.cs, d, cell: c });
-        }
-        if (lines.length) out.sheets.push({ sheet: s, lines: lines.sort((a, b) => Math.abs(b.d) - Math.abs(a.d)) });
-      }
       for (const th of threadsAt(T)) {
         const last = th.items[th.items.length - 1].date;
         if (last <= since) continue;
         const dec = decisionAt(T, th.id);
-        const acted = record.edits.filter(e => e.src === th.id && editLive(e, T)).map(e => e.date).sort().pop();
-        const newest = [dec && dec.date, acted].filter(Boolean).sort().pop();
-        if (newest && newest >= last) { if (dec && dec.outcome === "waiting" && dec.date >= (acted || "")) out.waiting.push({ thread: th, decision: dec }); continue; }
-        out.inputs.push({ thread: th, reopened: !!newest });
+        if (dec && dec.date >= last) { if (dec.outcome === "waiting") out.waiting.push({ thread: th, decision: dec }); continue; }
+        out.inputs.push({ thread: th, reopened: !!dec });
       }
       return out;
     }
 
-    /* ================================================================ v3 engine
-     * The planner's month: draft from the sheets, checks against shipments and sales,
+    /* ================================================================ the planner's month
+     * Draft from the sheets, checks against shipments and sales,
      * typed changes on a published version, and the answer key. Every text a screen
      * shows is a short phrase ("ships ~310/mo"); longer detail sits in a `detail` field. */
     const SHIP = D.shipments || { monthly: {}, amendments: [] };
@@ -608,11 +553,8 @@
           const cr = carry[key] || [];
           if (cr.length) { ln.carried = cr; ln.touched = true; ln.note = [ln.note, ...cr.map(c => `${c.delta >= 0 ? "+" : ""}${fmt(c.delta)} ${c.ref || "change"} kept`)].filter(Boolean).join("; "); }
           const extra = cr.reduce((a, c) => a + c.delta, 0);
-          // a decision on the line: v3 target "draft:<cycle>|<key>", or the v2 screens' buttons
-          // (decision "line:<sheet>|<key>" = keep plan; an edit from this sheet on this key = use the request)
-          let dec = decisionAt(T, "draft:" + cycle + "|" + key);
-          if (!dec) { const old = decisionAt(T, "line:" + s.id + "|" + key); if (old) dec = { ...old, outcome: old.outcome === "keep" ? "keep" : old.outcome }; }
-          if (!dec) { const e = record.edits.filter(e => e.src === s.id && e.key === key && editLive(e, T)).pop(); if (e) dec = { id: e.id, date: e.date, target: "edit", outcome: "request", note: e.reason }; }
+          // a decision from Check ("draft:<cycle>|<key>") or Keep plan on a late sheet ("line:<sheet>|<key>")
+          const dec = decisionAt(T, "draft:" + cycle + "|" + key) || decisionAt(T, "line:" + s.id + "|" + key);
           if (dec) ln.decision = dec;
           // no usable number: the last plan stands until the head manager decides
           const asIs = ln.asked == null ? last : ln.asked + extra;
@@ -634,12 +576,7 @@
         headline: `${counts.sheets} sheets: ${fmt(counts.lines)} lines, ${fmt(counts.accepted)} as asked, ${counts.needs + counts.problems} need you`,
       };
     }
-    /* the lines that need the planner, biggest gap first */
-    function flags(T, cycle) {
-      const d = draft(T, cycle); if (!d) return [];
-      return d.lines.filter(l => l.status === "needs" || l.status === "problem").sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
-    }
-    /* Review screen rows: the flagged lines with the numbers side by side */
+    /* Check screen rows: the flagged lines with the numbers side by side */
     function review(T, cycle) {
       const d = draft(T, cycle); if (!d) return { lines: [], total: null, sheets: 0 };
       const L = d.lines.filter(l => l.status === "needs" || l.status === "problem").sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap)).map(l => {
@@ -653,12 +590,6 @@
       const openBy = {}; for (const l of L) if (!l.settled) openBy[l.region] = (openBy[l.region] || 0) + 1;
       const touched = d.lines.filter(l => l.touched).map(l => ({ key: l.key, region: l.region, sku: l.sku, month: l.month, last: l.last, ask: l.asked, value: l.value, why: l.note, carried: l.carried, status: l.status }));
       return { lines: L, open: L.filter(l => !l.settled).length, openBy, touched, total: d.counts.lines, accepted: d.counts.accepted, sheets: d.counts.sheets, cycle: d.cycle, headline: d.headline, synthetic: d.synthetic, lastPlan: d.lastPlan };
-    }
-    /* the same flags grouped by region × item: one decision often covers several months */
-    function flagGroups(T, cycle) {
-      const g = {};
-      for (const l of flags(T, cycle)) (g[l.region + "|" + l.sku] = g[l.region + "|" + l.sku] || { region: l.region, sku: l.sku, item: ITEMS[l.sku].name, lines: [] }).lines.push(l);
-      return Object.values(g).map(x => ({ ...x, months: x.lines.map(l => l.month).sort(), gap: x.lines.reduce((a, l) => a + l.gap, 0), reason: x.lines.length > 1 ? `${x.lines.length} months; ${x.lines.sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))[0].reason}` : x.lines[0].reason })).sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
     }
     /* the draft as a version the screens can publish (the screen adds an id and pushes it to record.versions) */
     function draftVersion(T, opts) {
@@ -1081,10 +1012,8 @@
 
     return {
       messageText, assistantContext, lookup,
-      inputs, byId, sheets, versionsAll, ITEMS, regionName,
-      baseAt, prevBase, planAt, editsAt, inputsAt, threadsAt, editLive, sheetsAt, cycleAt, latestSheet, requestAt, decisionAt, checks, needs, fmt, sign,
-      // v3
-      options: OPT, draft, review, flags, flagGroups, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, knownAt, poAt, purchaseNews, ordersAt, shipAt, expectShip, expectSales, lineChecks, isSeasonal, lastPlanFor, toCases, addM,
+      inputs, byId, sheets, versionsAll, planAt, inputsAt, threadsAt, sheetsAt, cycleAt, latestSheet, requestAt, needs, fmt, sign,
+      review, draftVersion, working, changesAt, answerKey, lineInfo, releaseList, poAt, purchaseNews, ordersAt,
     };
   }
 

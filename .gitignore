@@ -1,18 +1,10 @@
-# Supplied data: 252 MB, stays on this PC
+# Supplied data and everything built from it
 Dutch_Bros_Techincal_Packet/
-# Python and notebook noise
-.venv/
-__pycache__/
-.ipynb_checkpoints/
-
-# Built from the packet by pipeline/build_data.py; carries packet contents
 site/data.js
 
-# Assistant key for local dev (Cloudflare secret in production); never committed
+# Local secrets and tooling
 .dev.vars
-# npm
-node_modules/
-# Session handoff notes; local only
-docs/HANDOFF.md
-# wrangler local build and dev state
 .wrangler/
+node_modules/
+.venv/
+__pycache__/
