@@ -10,6 +10,7 @@ About 7 minutes. October is made up from the real September files and says so on
    Or click **Walkthrough** instead: it resets the demo too, then shows each step below in a small popup beside the thing to click, with Back and Next. The popup's words come from `site/demo-steps.js`; after editing that file, run `node dev/demo-md.mjs` to rewrite the table below.
 4. Step 11 opens the submanager page in a second tab, from **Submanager view ↗** at the top right.
 5. The AI buttons need `ANTHROPIC_API_KEY=...` in `C:\AISA\.dev.vars`. Without it they say "Assistant not connected".
+6. Hosted copy: https://supply-desk-8en.pages.dev/ (Cloudflare Pages project `supply-desk`). The AI buttons there ask once for the assistant passcode. To publish changes, from `C:\AISA` run `npx.cmd wrangler pages deploy site --project-name supply-desk --branch main`.
 
 ## Steps
 
