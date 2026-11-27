@@ -864,10 +864,13 @@
             const id = "late:" + a.sku + "@" + a.month, more = askedOf(id, T).filter(o => o.action !== "cut").reduce((t, o) => t + o.qty, 0);
             const ups = a.parts.filter(p => p.d > 0), reg = ups.slice().sort((x, y) => y.d - x.d)[0].region;
             const whys = [...new Set(ups.map(p => p.reason).filter(Boolean))].join("; ");
+            // cases another region gave up in the same month cover part of the rise; say so, or the ask looks short
+            const downs = a.parts.filter(p => p.d < 0), freed = -downs.reduce((t, p) => t + p.d, 0);
+            const less = freed >= 1 ? `, less ${fmt(freed)} freed by ${[...new Set(downs.map(p => regionName(p.region)))].join(", ")}` : "";
             // the change sends its order the day it is saved, so lateness is judged from that day, not from today
             const lands = addD(a.date, lead(a.sku)), late = Math.round((new Date(lands) - new Date(need)) / 864e5), whoFor = ups.length === 1 ? regionName(reg) : ups.map(p => regionName(p.region)).join(", ");
             if (net - more >= 1) autos.push({ id: "auto:" + id, item: id, auto: true, date: a.date, action: "more", sku: a.sku, month: a.month, po: "",
-              qty: Math.round((net - more) * 100) / 100, by: need, reason: `For ${whoFor}${whys ? `: ${whys}` : ""}`, title: "From a plan change" });
+              qty: Math.round((net - more) * 100) / 100, by: need, reason: `For ${whoFor}${whys ? `: ${whys}` : ""}${less}`, title: "From a plan change" });
             if (by >= a.date) continue;
             items.push({ id, kind: "late", date: a.date, sku: a.sku, month: a.month, region: reg, lines: [], need: net, synthetic: false, orderBy: by,
               title: `${name(a.sku)}: ${fmt(net)} more cases for ${dl(need)} won't arrive in time`,

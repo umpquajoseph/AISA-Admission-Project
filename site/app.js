@@ -1099,7 +1099,7 @@ function pageAsk() {
     : `<button class="btn small primary" data-approve="${k}">Approve</button> <span>${esc(a.label)}</span>${a.checks && a.checks.length ? ` <span class="warn-text">${a.checks.map(esc).join(" · ")}</span>` : ""}${a.gone ? ` <span class="hint">${esc(a.gone)}</span>` : ""}`}</div>`;
   $("page").innerHTML = `<div class="ask">
     ${head("Ask", "Ask about the plan, a sheet, an email or a change, or tell it what to do with a Late news item. Answers come only from this desk's record. Nothing changes until you click Approve.")}
-    ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")}</div>
+    ${hist.map((h, i) => `<div class="qa"><div class="q">${esc(h.q)}</div>${h.error ? `<div class="ainote bad">${esc(h.error)}</div>` : `<div class="a">${esc(h.answer).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/^- /gm, "• ")}</div>
       ${(h.actions || []).map((a, j) => actHtml(a, `${i}|${j}`)).join("")}
       <div class="cites">${(h.cites || []).map(c => `<span class="pill">${esc(c.label || c.id)}</span>`).join(" ")}</div>`}<div class="hint">as of ${dlabel(h.date)}${h.looked && h.looked.length ? ` · looked up ${esc(h.looked.join(", "))}` : ""}</div></div>`).join("")}
     <form class="askbox" id="askForm"><textarea id="askQ" placeholder="${hist.length ? "Reply, or ask a follow-up" : "Ask about the plan, or say what to do with a Late news item"}">${esc(S.askQ || "")}</textarea><button class="btn primary" ${S.asking ? "disabled" : ""}>${S.asking ? "Thinking…" : hist.length ? "Reply" : "Ask"}</button></form>
