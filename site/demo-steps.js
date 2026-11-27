@@ -21,7 +21,7 @@ window.DEMO_STEPS = [
     shows: "Exception review: only lines out of step with last year's shipments and sales reach the planner. The rest go in as asked." },
   { click: "On three lines: **Use theirs**, **Keep last plan**, **Set…**",
     say: "Three choices. Anything I skip goes in as asked.",
-    shows: "One-click decisions: take the region's number, keep last month's plan, or set your own." },
+    shows: "One-click decisions: take the region's number, keep the last plan, or set your own." },
   { click: "**Next: publish** → click any number → **Publish the October plan**",
     say: "Each number shows what was asked, the checks and every past version.",
     shows: "Audit trail: each number shows what was asked, the checks and every past version, so any decision can be explained. Publishing makes it the plan in force." },
